@@ -15,7 +15,10 @@ from app.events.models import Candle, CandleClosedEvent, utc_from_millis
 from app.monitoring.health import HealthStatus
 
 LOGGER = logging.getLogger(__name__)
-WS_BASE_URL = "wss://fstream.binance.com/ws"
+# Binance routes candlestick streams through its regular-market endpoint.  The
+# legacy un-routed endpoint can still acknowledge a subscription while never
+# delivering kline payloads, so use the explicit route.
+WS_BASE_URL = "wss://fstream.binance.com/market/ws"
 ReconcileCallback = Callable[[], Awaitable[None]]
 
 
@@ -129,19 +132,13 @@ class BinanceWebSocketClient:
         self._subscription_id += 1
         await self._websocket.send_json({"method": "SUBSCRIBE", "params": list(self.stream_names), "id": request_id})
         LOGGER.info("Subscription request sent: id=%s streams=%s", request_id, ",".join(self.stream_names))
-        acknowledgement = await self._websocket.receive(timeout=self.receive_timeout_seconds)
-        if acknowledgement.type != aiohttp.WSMsgType.TEXT:
-            raise ValueError(f"Binance subscription acknowledgement was {acknowledgement.type.name}")
-        payload = json.loads(acknowledgement.data)
+        payload = await self._receive_control_response(request_id, "subscription acknowledgement")
         if payload.get("id") != request_id or payload.get("result") is not None:
             raise ValueError(f"Binance subscription rejected: {payload}")
         verification_id = self._subscription_id
         self._subscription_id += 1
         await self._websocket.send_json({"method": "LIST_SUBSCRIPTIONS", "id": verification_id})
-        verification = await self._websocket.receive(timeout=self.receive_timeout_seconds)
-        if verification.type != aiohttp.WSMsgType.TEXT:
-            raise ValueError(f"Binance subscription verification was {verification.type.name}")
-        active = json.loads(verification.data)
+        active = await self._receive_control_response(verification_id, "subscription verification")
         active_streams = tuple(active.get("result", ()))
         if active.get("id") != verification_id or set(active_streams) != set(self.stream_names):
             raise ValueError(f"Binance active subscriptions do not match request: {active}")
@@ -150,6 +147,28 @@ class BinanceWebSocketClient:
         self.health.last_reconnect_error = None
         self._notify_health_update()
         LOGGER.info("Subscription acknowledgement received: id=%s; %d active streams verified", request_id, len(active_streams))
+
+    async def _receive_control_response(self, request_id: int, description: str) -> dict[str, Any]:
+        """Wait for a Binance control reply while safely accepting interleaved data events."""
+        if self._websocket is None:  # pragma: no cover - lifecycle guard
+            raise RuntimeError("WebSocket is not connected")
+        deadline = asyncio.get_running_loop().time() + self.receive_timeout_seconds
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError(f"Timed out waiting for Binance {description}")
+            message = await self._websocket.receive(timeout=remaining)
+            if message.type != aiohttp.WSMsgType.TEXT:
+                raise ValueError(f"Binance {description} was {message.type.name}")
+            payload = json.loads(message.data)
+            if payload.get("id") == request_id:
+                return payload
+            # Kline events may legitimately arrive before a LIST_SUBSCRIPTIONS reply.
+            # Process them instead of disconnecting a healthy market-data session.
+            if isinstance(payload.get("data", payload).get("k"), dict):
+                await self.process_message(payload)
+                continue
+            LOGGER.warning("Ignoring unexpected Binance message while awaiting %s: %s", description, payload)
 
     async def process_message(self, raw_message: str | dict[str, Any]) -> None:
         try:

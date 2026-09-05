@@ -15,6 +15,7 @@ from app.config.settings import Settings
 from app.data.candles import CandleStore
 from app.events.models import Candle, CandleClosedEvent
 from app.strategy.csd_strategy import CSDStrategyEngine, SetupAssessment
+from app.strategy.regime import RegimeClassifier
 from app.strategy.risk import RiskAnalysis
 from app.backtest.walkforward import WalkForwardWindow, rolling_windows
 
@@ -149,6 +150,8 @@ async def collect_strategy_plans(settings: Settings, candles: Sequence[Candle]) 
     strategy = CSDStrategyEngine(
         store, settings.primary_timeframe, left_bars=settings.swing.left_bars, right_bars=settings.swing.right_bars,
         minimum_close_distance_percent=settings.csd.minimum_close_distance_percent,
+        breakout_method=settings.breakout.method, minimum_close_atr=settings.breakout.minimum_close_atr,
+        regime_classifier=RegimeClassifier(**settings.regime.__dict__),
         retest_zone_percent=settings.retest.zone_percent,
         maximum_bars_after_breakout=settings.retest.maximum_bars_after_breakout,
         volume_ratio_minimum=settings.confirmation.volume_ratio_minimum,
@@ -222,7 +225,7 @@ class CanonicalTradeSimulator:
                           plan.assessment.score.total, str(plan.assessment.score.classification), trade.closed_at,
                           trade.exit_reason, gross, costs.total_r, gross - costs.total_r, trade.resolution_method,
                           trade.ambiguous_intrabar_events > 0, trade.bars_since_entry, trade.mfe_r, trade.mae_r,
-                          plan.analysis.symbol, None, None)
+                          plan.analysis.symbol, plan.analysis.regime, None)
 
 
 class Phase9ValidationOrchestrator:

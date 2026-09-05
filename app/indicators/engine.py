@@ -15,6 +15,7 @@ class IndicatorValues:
     bollinger: "BollingerBands | None" = None
     volume_sma: Decimal | None = None
     volume_ratio: Decimal | None = None
+    atr: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -36,17 +37,19 @@ class IndicatorEngine:
     def __init__(self, ema_periods: tuple[int, ...] = (10, 50, 200), rsi_period: int = 14,
                  macd_fast: int = 12, macd_slow: int = 26, macd_signal: int = 9,
                  bollinger_period: int = 20, bollinger_stddev: Decimal = Decimal("2"),
-                 volume_period: int = 20) -> None:
-        periods = (*ema_periods, rsi_period, macd_fast, macd_slow, macd_signal, bollinger_period, volume_period)
+                 volume_period: int = 20, atr_period: int = 14) -> None:
+        periods = (*ema_periods, rsi_period, macd_fast, macd_slow, macd_signal, bollinger_period, volume_period, atr_period)
         if any(period < 1 for period in periods) or macd_fast >= macd_slow:
             raise ValueError("Indicator periods must be positive and MACD fast must be less than slow")
         self.ema_periods = ema_periods
         self.rsi_period, self.macd_fast, self.macd_slow, self.macd_signal = rsi_period, macd_fast, macd_slow, macd_signal
         self.bollinger_period, self.bollinger_stddev, self.volume_period = bollinger_period, bollinger_stddev, volume_period
+        self.atr_period = atr_period
 
     def calculate(self, candles: Sequence[Candle]) -> IndicatorValues:
-        closes = [candle.close for candle in candles if candle.is_closed]
-        volumes = [candle.volume for candle in candles if candle.is_closed]
+        closed = [candle for candle in candles if candle.is_closed]
+        closes = [candle.close for candle in closed]
+        volumes = [candle.volume for candle in closed]
         return IndicatorValues(
             ema={period: self._ema(closes, period) for period in self.ema_periods if closes},
             rsi=self._rsi(closes, self.rsi_period),
@@ -54,6 +57,7 @@ class IndicatorEngine:
             bollinger=self._bollinger(closes),
             volume_sma=self._sma(volumes, self.volume_period),
             volume_ratio=(volumes[-1] / self._sma(volumes, self.volume_period)) if volumes and self._sma(volumes, self.volume_period) not in (None, Decimal(0)) else None,
+            atr=self._atr(closed, self.atr_period),
         )
 
     @staticmethod
@@ -70,6 +74,26 @@ class IndicatorEngine:
             return None
         window = values[-period:]
         return sum(window) / Decimal(period)
+
+    @staticmethod
+    def _atr(candles: Sequence[Candle], period: int) -> Decimal | None:
+        """Wilder ATR from closed candles, never from an in-progress bar."""
+        if len(candles) < period:
+            return None
+        true_ranges: list[Decimal] = []
+        previous_close: Decimal | None = None
+        for candle in candles:
+            ranges = [candle.high - candle.low]
+            if previous_close is not None:
+                ranges.extend((abs(candle.high - previous_close), abs(candle.low - previous_close)))
+            true_ranges.append(max(ranges))
+            previous_close = candle.close
+        if len(true_ranges) < period:
+            return None
+        value = sum(true_ranges[:period]) / Decimal(period)
+        for current in true_ranges[period:]:
+            value = (value * Decimal(period - 1) + current) / Decimal(period)
+        return value
 
     @staticmethod
     def _rsi(values: list[Decimal], period: int) -> Decimal | None:

@@ -14,6 +14,9 @@ def test_loads_enabled_disabled_multiple_symbols():
     assert settings.historical_candle_limit == 42
     assert settings.swing.left_bars == 3
     assert settings.csd.minimum_close_distance_percent == Decimal("0.05")
+    assert settings.breakout.method == "percent"
+    assert settings.breakout.minimum_close_atr == Decimal("0.15")
+    assert settings.regime.high_atr_percent == Decimal("1.5")
     assert settings.retest.maximum_bars_after_breakout == 12
     assert settings.confirmation.volume_ratio_minimum == Decimal("1")
     assert settings.risk.stop_buffer_percent == Decimal("0")

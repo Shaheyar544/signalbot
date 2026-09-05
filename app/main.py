@@ -22,6 +22,7 @@ from app.signals.models import build_signal_id
 from app.storage.database import Database
 from app.storage.repositories import CandleRepository, NotificationRepository, SignalRepository
 from app.strategy.csd_strategy import CSDStrategyEngine
+from app.strategy.regime import RegimeClassifier
 
 
 async def validate_enabled_symbols(rest: BinanceRestClient, symbols: tuple[str, ...]) -> tuple[str, ...]:
@@ -86,6 +87,9 @@ async def run(config_path: str, *, force_live: bool = False, acknowledge_risk: b
         left_bars=settings.swing.left_bars,
         right_bars=settings.swing.right_bars,
         minimum_close_distance_percent=settings.csd.minimum_close_distance_percent,
+        breakout_method=settings.breakout.method,
+        minimum_close_atr=settings.breakout.minimum_close_atr,
+        regime_classifier=RegimeClassifier(**settings.regime.__dict__),
         retest_zone_percent=settings.retest.zone_percent,
         maximum_bars_after_breakout=settings.retest.maximum_bars_after_breakout,
         volume_ratio_minimum=settings.confirmation.volume_ratio_minimum,

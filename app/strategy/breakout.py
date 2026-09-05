@@ -26,6 +26,7 @@ class BreakoutSetup:
     status: BreakoutStatus = BreakoutStatus.PENDING_RETEST
     bars_after_breakout: int = 0
     quality: Decimal = Decimal("0")
+    invalidation_reason: str | None = None
 
 
 class BreakoutEngine:
@@ -53,11 +54,12 @@ class BreakoutEngine:
     def get(self, symbol: str, timeframe: str) -> BreakoutSetup | None:
         return self._setups.get((symbol, timeframe))
 
-    def resolve(self, symbol: str, timeframe: str, status: BreakoutStatus) -> BreakoutSetup | None:
+    def resolve(self, symbol: str, timeframe: str, status: BreakoutStatus, *,
+                invalidation_reason: str | None = None) -> BreakoutSetup | None:
         current = self._setups.get((symbol, timeframe))
         if current is None:
             return None
-        resolved = replace(current, status=status)
+        resolved = replace(current, status=status, invalidation_reason=invalidation_reason)
         self._setups[(symbol, timeframe)] = resolved
         return resolved
 
@@ -67,6 +69,7 @@ class BreakoutEngine:
             return current
         advanced = replace(current, bars_after_breakout=current.bars_after_breakout + 1)
         if advanced.bars_after_breakout > self.maximum_bars_after_breakout:
-            advanced = replace(advanced, status=BreakoutStatus.EXPIRED)
+            advanced = replace(advanced, status=BreakoutStatus.EXPIRED,
+                               invalidation_reason="RETEST_WINDOW_EXPIRED")
         self._setups[(symbol, timeframe)] = advanced
         return advanced

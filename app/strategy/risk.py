@@ -24,6 +24,7 @@ class RiskAnalysis:
     risk_unit: Decimal
     take_profits: tuple[Decimal, Decimal, Decimal]
     take_profit_4: Decimal | None
+    regime: str | None = None
 
 
 class RiskEngine:
@@ -33,7 +34,8 @@ class RiskEngine:
             raise ValueError("stop_buffer_percent cannot be negative")
         self.stop_buffer_percent = stop_buffer_percent
 
-    def calculate(self, assessment: SetupAssessment, structure_events: Sequence[StructureEvent] = ()) -> RiskAnalysis:
+    def calculate(self, assessment: SetupAssessment, structure_events: Sequence[StructureEvent] = (), *,
+                  regime: str | None = None) -> RiskAnalysis:
         setup = assessment.retest.setup
         retest_candle = assessment.retest.candle
         reference_entry = (setup.zone_lower + setup.zone_upper) / Decimal(2)
@@ -51,7 +53,7 @@ class RiskEngine:
             raise ValueError("Risk calculation requires a stop loss beyond the entry zone")
         tp4 = self._structure_target(setup.direction, reference_entry, setup.symbol, setup.timeframe, structure_events)
         return RiskAnalysis(setup.symbol, setup.timeframe, setup.direction, setup.zone_lower, setup.zone_upper,
-                            reference_entry, stop_loss, risk, targets, tp4)  # type: ignore[arg-type]
+                            reference_entry, stop_loss, risk, targets, tp4, regime)  # type: ignore[arg-type]
 
     @staticmethod
     def _structure_target(direction: CSDDirection, entry: Decimal, symbol: str, timeframe: str,

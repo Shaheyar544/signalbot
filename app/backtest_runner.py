@@ -15,6 +15,7 @@ from app.events.models import Candle, CandleClosedEvent
 from app.replay import ClosedCandleConsumer
 from app.storage.repositories import BacktestRepository
 from app.strategy.csd_strategy import CSDStrategyEngine, SetupAssessment
+from app.strategy.regime import RegimeClassifier
 from app.strategy.risk import RiskAnalysis
 
 StrategyFactory = Callable[[CandleStore, Callable[[RiskAnalysis], object]], ClosedCandleConsumer]
@@ -70,6 +71,9 @@ class HistoricalBacktestRunner:
             store, self.settings.primary_timeframe, left_bars=self.settings.swing.left_bars,
             right_bars=self.settings.swing.right_bars,
             minimum_close_distance_percent=self.settings.csd.minimum_close_distance_percent,
+            breakout_method=self.settings.breakout.method,
+            minimum_close_atr=self.settings.breakout.minimum_close_atr,
+            regime_classifier=RegimeClassifier(**self.settings.regime.__dict__),
             retest_zone_percent=self.settings.retest.zone_percent,
             maximum_bars_after_breakout=self.settings.retest.maximum_bars_after_breakout,
             volume_ratio_minimum=self.settings.confirmation.volume_ratio_minimum,
@@ -117,5 +121,5 @@ class HistoricalBacktestRunner:
             record.assessment.score.total, record.assessment.score.classification, trade.closed_at,
             trade.exit_reason, gross, costs.total_r, gross - costs.total_r, trade.resolution_method,
             trade.ambiguous_intrabar_events > 0,
-            trade.bars_since_entry, trade.mfe_r, trade.mae_r, record.analysis.symbol, None, None,
+            trade.bars_since_entry, trade.mfe_r, trade.mae_r, record.analysis.symbol, record.analysis.regime, None,
         ))

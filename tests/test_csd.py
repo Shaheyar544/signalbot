@@ -54,3 +54,30 @@ def test_csd_engine_does_not_repeat_the_same_swing_break(make_candle):
 
     assert engine.evaluate(first_break, structure) is not None
     assert engine.evaluate(later_break, structure) is None
+
+
+def test_csd_engine_supports_an_atr_based_close_threshold(make_candle):
+    resistance = make_candle(offset=1, close="100")
+    structure = [_event(resistance, SwingType.HIGH, 100, StructureKind.LH)]
+    weak_break = replace(make_candle(offset=2, close="100.4"), high=Decimal("101"))
+    valid_break = replace(make_candle(offset=3, close="100.8"), high=Decimal("101"))
+    engine = CSDEngine(
+        minimum_close_distance_percent=Decimal("0.05"),
+        breakout_method="atr",
+        minimum_close_atr=Decimal("0.15"),
+    )
+
+    assert engine.evaluate(weak_break, structure, atr=Decimal("3")) is None
+    event = engine.evaluate(valid_break, structure, atr=Decimal("3"))
+    assert event is not None
+    assert event.close_distance_atr == Decimal("0.2666666666666666666666666667")
+
+
+def test_csd_engine_requires_an_available_positive_atr_in_atr_mode(make_candle):
+    resistance = make_candle(offset=1, close="100")
+    structure = [_event(resistance, SwingType.HIGH, 100, StructureKind.LH)]
+    candle = replace(make_candle(offset=2, close="101"), high=Decimal("102"))
+    engine = CSDEngine(breakout_method="atr", minimum_close_atr=Decimal("0.15"))
+
+    assert engine.evaluate(candle, structure, atr=None) is None
+    assert engine.evaluate(candle, structure, atr=Decimal(0)) is None

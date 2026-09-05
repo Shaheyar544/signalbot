@@ -17,6 +17,7 @@ class RetestEvent:
     status: BreakoutStatus
     setup: BreakoutSetup
     quality: Decimal = Decimal("0")
+    invalidation_reason: str | None = None
 
 
 class RetestEngine:
@@ -30,14 +31,22 @@ class RetestEngine:
         if setup is None or setup.status is not BreakoutStatus.PENDING_RETEST:
             return None
         setup = self.breakouts.advance(candle.symbol, candle.timeframe)
-        if setup is None or setup.status is not BreakoutStatus.PENDING_RETEST:
+        if setup is None:
+            return None
+        if setup.status is BreakoutStatus.EXPIRED:
+            return RetestEvent(candle.symbol, candle.timeframe, candle, setup.breakout_level,
+                               BreakoutStatus.EXPIRED, setup, invalidation_reason="RETEST_WINDOW_EXPIRED")
+        if setup.status is not BreakoutStatus.PENDING_RETEST:
             return None
         touches_zone = candle.low <= setup.zone_upper and candle.high >= setup.zone_lower
         valid_close = candle.close > setup.breakout_level if setup.direction is CSDDirection.BULLISH else candle.close < setup.breakout_level
         invalid_close = candle.close < setup.breakout_level if setup.direction is CSDDirection.BULLISH else candle.close > setup.breakout_level
         if invalid_close:
-            resolved = self.breakouts.resolve(candle.symbol, candle.timeframe, BreakoutStatus.INVALIDATED)
-            return RetestEvent(candle.symbol, candle.timeframe, candle, setup.breakout_level, BreakoutStatus.INVALIDATED, resolved or setup)
+            reason = "IMMEDIATE_BREAKOUT_REVERSAL" if setup.bars_after_breakout <= 1 else "FAILED_RETEST_CLOSE_THROUGH"
+            resolved = self.breakouts.resolve(candle.symbol, candle.timeframe, BreakoutStatus.INVALIDATED,
+                                              invalidation_reason=reason)
+            return RetestEvent(candle.symbol, candle.timeframe, candle, setup.breakout_level,
+                               BreakoutStatus.INVALIDATED, resolved or setup, invalidation_reason=reason)
         if touches_zone and valid_close:
             resolved = self.breakouts.resolve(candle.symbol, candle.timeframe, BreakoutStatus.RETEST_DETECTED)
             span = candle.high - candle.low

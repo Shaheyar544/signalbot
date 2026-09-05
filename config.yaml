@@ -40,6 +40,21 @@ swing:
 csd:
   minimum_close_distance_percent: 0.05
 
+# V1-compatible default. Set method: atr only for an explicitly configured
+# research variant; the ATR is calculated from closed candles only.
+breakout:
+  method: percent
+  minimum_close_distance_percent: 0.05
+  minimum_close_atr: 0.15
+
+# Observational context only. variants.regime_filter remains none, so these
+# classifications do not alter frozen V1 signal behaviour.
+regime:
+  high_atr_percent: 1.5
+  low_atr_percent: 0.3
+  trend_ema_separation_percent: 0.2
+  range_ema_separation_percent: 0.05
+
 retest:
   zone_percent: 0.20
   maximum_bars_after_breakout: 12

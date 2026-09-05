@@ -16,6 +16,7 @@ from app.strategy.retest import RetestEngine, RetestEvent
 from app.strategy.risk import RiskAnalysis, RiskEngine
 from app.strategy.scoring import ConfidenceScore, ScoringEngine, SignalClassification
 from app.strategy.scoring import ScoringWeights
+from app.strategy.regime import MarketRegime, RegimeClassifier
 from app.config.settings import ScoringSettings
 from app.structure.csd import CSDEngine, CSDEvent
 from app.structure.market_structure import MarketStructureEngine, StructureEvent
@@ -47,7 +48,8 @@ class CSDStrategyEngine:
                  on_assessment: AssessmentHandler | None = None, volume_ratio_minimum: Decimal = Decimal("1"),
                  rsi_bullish_minimum: Decimal = Decimal("50"), rsi_bearish_maximum: Decimal = Decimal("50"),
                  stop_buffer_percent: Decimal = Decimal("0"), on_risk_analysis: RiskHandler | None = None,
-                 scoring_settings: ScoringSettings | None = None) -> None:
+                 scoring_settings: ScoringSettings | None = None, breakout_method: str = "percent",
+                 minimum_close_atr: Decimal = Decimal("0.15"), regime_classifier: RegimeClassifier | None = None) -> None:
         scoring_settings = scoring_settings or ScoringSettings()
         self.scoring_settings = scoring_settings
         self.store = store
@@ -56,7 +58,8 @@ class CSDStrategyEngine:
         self.swings = SwingDetector(left_bars, right_bars)
         self.swing_store = SwingStore()
         self.structure = MarketStructureEngine()
-        self.csd = CSDEngine(minimum_close_distance_percent)
+        self.csd = CSDEngine(minimum_close_distance_percent, breakout_method=breakout_method,
+                             minimum_close_atr=minimum_close_atr)
         self.breakouts = BreakoutEngine(retest_zone_percent, maximum_bars_after_breakout,
                                         scoring_settings.breakout_saturation_percent)
         self.retests = RetestEngine(self.breakouts)
@@ -72,6 +75,7 @@ class CSDStrategyEngine:
             volume=scoring_settings.volume_weight, htf=scoring_settings.htf_weight,
         ))
         self.risk = RiskEngine(stop_buffer_percent)
+        self.regime_classifier = regime_classifier or RegimeClassifier()
         self.on_csd = on_csd
         self.on_retest = on_retest
         self.on_assessment = on_assessment
@@ -80,11 +84,13 @@ class CSDStrategyEngine:
         self.latest_structure: dict[tuple[str, str], list[StructureEvent]] = {}
         self.latest_assessment: dict[tuple[str, str], SetupAssessment] = {}
         self.latest_risk_analysis: dict[tuple[str, str], RiskAnalysis] = {}
+        self.latest_regime: dict[tuple[str, str], MarketRegime] = {}
 
     async def on_candle_closed(self, event: CandleClosedEvent) -> CSDEvent | None:
         candles = self.store.get_recent_as_of(event.symbol, event.timeframe, 500, event.candle.open_time)
         key = (event.symbol, event.timeframe)
         self.latest_indicators[key] = self.indicators.calculate(candles)
+        self.latest_regime[key] = self.regime_classifier.classify(event.candle.close, self.latest_indicators[key])
         if event.timeframe != self.primary_timeframe:
             return None
         retest_event = self.retests.evaluate(event.candle)
@@ -122,7 +128,9 @@ class CSDStrategyEngine:
                         await result
                 if assessment.score.classification in {SignalClassification.GOOD_SIGNAL, SignalClassification.STRONG_SIGNAL}:
                     try:
-                        analysis = self.risk.calculate(assessment, self.latest_structure.get(key, []))
+                        analysis = self.risk.calculate(
+                            assessment, self.latest_structure.get(key, []), regime=self.latest_regime[key].value,
+                        )
                     except ValueError as error:
                         # A malformed/degenerate setup is not a trade; keep replay alive and auditable.
                         LOGGER.warning("Skipping invalid risk plan for %s %s: %s", event.symbol, event.timeframe, error)
@@ -135,7 +143,7 @@ class CSDStrategyEngine:
         self.swing_store.replace(self.swings.detect(candles))
         structure = self.structure.evaluate(event.symbol, event.timeframe, self.swing_store.get_swings(event.candle.close_time))
         self.latest_structure[key] = structure
-        csd_event = self.csd.evaluate(event.candle, structure)
+        csd_event = self.csd.evaluate(event.candle, structure, atr=self.latest_indicators[key].atr)
         if csd_event is not None:
             LOGGER.info("%s %s CSD detected at %s", csd_event.symbol, csd_event.direction, csd_event.candle.close_time.isoformat())
             self.breakouts.start(csd_event)

@@ -41,6 +41,26 @@ class CSDSettings:
 
 
 @dataclass(frozen=True)
+class BreakoutValidationSettings:
+    """Close-through validation for a CSD/breakout event.
+
+    ``percent`` is the historical V1 behaviour.  ``atr`` is opt-in and
+    requires the causal ATR value calculated from closed candles only.
+    """
+    method: str = "percent"
+    minimum_close_distance_percent: Decimal = Decimal("0.05")
+    minimum_close_atr: Decimal = Decimal("0.15")
+
+
+@dataclass(frozen=True)
+class RegimeSettings:
+    high_atr_percent: Decimal = Decimal("1.5")
+    low_atr_percent: Decimal = Decimal("0.3")
+    trend_ema_separation_percent: Decimal = Decimal("0.2")
+    range_ema_separation_percent: Decimal = Decimal("0.05")
+
+
+@dataclass(frozen=True)
 class RetestSettings:
     zone_percent: Decimal = Decimal("0.20")
     maximum_bars_after_breakout: int = 12
@@ -134,6 +154,8 @@ class Settings:
     websocket: WebSocketSettings
     swing: SwingSettings
     csd: CSDSettings
+    breakout: BreakoutValidationSettings
+    regime: RegimeSettings
     retest: RetestSettings
     confirmation: ConfirmationSettings
     scoring: ScoringSettings
@@ -197,6 +219,28 @@ def load_settings(path: str | Path = "config.yaml") -> Settings:
     minimum_distance = Decimal(str(csd.get("minimum_close_distance_percent", "0.05")))
     if minimum_distance < 0:
         raise ValueError("csd minimum_close_distance_percent cannot be negative")
+    breakout = raw.get("breakout", {})
+    breakout_method = str(breakout.get("method", "percent")).lower()
+    if breakout_method not in {"percent", "atr"}:
+        raise ValueError("breakout method must be 'percent' or 'atr'")
+    breakout_percent = Decimal(str(breakout.get("minimum_close_distance_percent", minimum_distance)))
+    breakout_atr = Decimal(str(breakout.get("minimum_close_atr", "0.15")))
+    if breakout_percent < 0 or breakout_atr < 0:
+        raise ValueError("breakout close thresholds cannot be negative")
+    regime = raw.get("regime", {})
+    regime_values = {
+        name: Decimal(str(regime.get(name, default)))
+        for name, default in {
+            "high_atr_percent": "1.5", "low_atr_percent": "0.3",
+            "trend_ema_separation_percent": "0.2", "range_ema_separation_percent": "0.05",
+        }.items()
+    }
+    if any(value < 0 for value in regime_values.values()):
+        raise ValueError("regime thresholds cannot be negative")
+    if regime_values["low_atr_percent"] > regime_values["high_atr_percent"]:
+        raise ValueError("regime low_atr_percent cannot exceed high_atr_percent")
+    if regime_values["range_ema_separation_percent"] > regime_values["trend_ema_separation_percent"]:
+        raise ValueError("regime range EMA separation cannot exceed trend EMA separation")
     retest = raw.get("retest", {})
     retest_zone = Decimal(str(retest.get("zone_percent", "0.20")))
     maximum_bars = int(retest.get("maximum_bars_after_breakout", 12))
@@ -292,6 +336,8 @@ def load_settings(path: str | Path = "config.yaml") -> Settings:
         ),
         swing=SwingSettings(left_bars, right_bars),
         csd=CSDSettings(minimum_distance),
+        breakout=BreakoutValidationSettings(breakout_method, breakout_percent, breakout_atr),
+        regime=RegimeSettings(**regime_values),
         retest=RetestSettings(retest_zone, maximum_bars),
         confirmation=ConfirmationSettings(bullish_rsi, bearish_rsi, volume_ratio),
         scoring=ScoringSettings(**scoring_values),

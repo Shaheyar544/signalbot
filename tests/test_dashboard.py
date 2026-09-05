@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -5,6 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.dashboard import create_dashboard_app
+from app.config.settings import CSDSettings, SwingSettings, load_settings
 from app.events.models import Candle
 from app.monitoring.health import HealthStatus
 from app.monitoring.runtime import RuntimeHealthSnapshotStore
@@ -28,6 +30,10 @@ def test_dashboard_home_page_is_available(tmp_path: Path):
     assert "Monitoring only" in response.text
     assert "WebSocket" in response.text
     assert "Notification delivery" in response.text
+    assert "Refresh interval: 1 minute" in response.text
+    assert "setInterval(load,60000)" in response.text
+    assert "Analyze latest closed candle" in response.text
+    assert 'api("/api/analysis/check", {method:"POST"' in response.text
 
 
 def test_signal_detail_empty_state_explains_that_no_signal_has_been_persisted(tmp_path: Path):
@@ -81,6 +87,49 @@ def test_status_endpoint_reports_database_and_enabled_symbols(tmp_path: Path):
     assert response.status_code == 200
     assert response.json()["database_connected"] is True
     assert response.json()["enabled_symbols"] == ["ETHUSDT", "BTCUSDT"]
+
+
+def test_manual_analysis_endpoint_reports_no_closed_candles_without_persisting_a_signal(tmp_path: Path):
+    database_path = tmp_path / "engine.db"
+    client = TestClient(create_dashboard_app(
+        database_path,
+        ("ETHUSDT",),
+        strategy_settings=load_settings("tests/fixtures/settings.yaml"),
+    ))
+
+    response = client.post("/api/analysis/check", json={"symbol": "ETHUSDT"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "symbol": "ETHUSDT", "timeframe": "15m", "status": "NO_CLOSED_CANDLES",
+        "read_only": True, "analyzed_candle_time": None, "classification": None,
+        "confidence": None, "direction": None, "evidence": None, "reference_plan": None,
+    }
+    assert client.get("/api/signals").json() == {"signals": []}
+
+
+def test_manual_analysis_reuses_strategy_for_a_retest_watch_without_persisting(tmp_path: Path, make_candle):
+    prices = ((1, 1), (3, 1), (1, 1), (2, 1), (1, 1), (3, 3))
+    candles = [replace(make_candle(offset=index), open=Decimal("1"), high=Decimal(str(high)),
+                       low=Decimal("1"), close=Decimal(str(close)))
+               for index, (high, close) in enumerate(prices)]
+    candles.append(replace(make_candle(offset=6, close="2.1"), open=Decimal("2"), high=Decimal("3"), low=Decimal("1.9")))
+    database_path = tmp_path / "engine.db"
+    database = Database(database_path); database.open()
+    CandleRepository(database).upsert_many(candles)
+    database.close()
+    settings = replace(load_settings("tests/fixtures/settings.yaml"), swing=SwingSettings(1, 1), csd=CSDSettings(Decimal("0.5")))
+    client = TestClient(create_dashboard_app(database_path, ("ETHUSDT",), strategy_settings=settings))
+
+    response = client.post("/api/analysis/check", json={"symbol": "ETHUSDT"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "WATCH"
+    assert response.json()["classification"] == "WATCH"
+    assert response.json()["direction"] == "BULLISH"
+    assert response.json()["evidence"]["retest"]["status"] == "RETEST_DETECTED"
+    assert response.json()["reference_plan"] is None
+    assert client.get("/api/signals").json() == {"signals": []}
 
 
 def test_status_endpoint_includes_the_engine_runtime_snapshot(tmp_path: Path):

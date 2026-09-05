@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.data.binance_ws import BinanceWebSocketClient, ReconnectBackoff
+from app.data.binance_ws import BinanceWebSocketClient, ReconnectBackoff, WS_BASE_URL
 from app.data.candles import CandleStore
 from app.events.bus import EventBus
 from app.monitoring.health import HealthStatus
@@ -71,6 +71,11 @@ def test_stream_names_are_dynamic_and_lowercase():
     assert client.stream_names == ("ethusdt@kline_15m", "ethusdt@kline_1h", "ethusdt@kline_4h", "btcusdt@kline_15m", "btcusdt@kline_1h", "btcusdt@kline_4h")
 
 
+def test_default_websocket_endpoint_uses_binance_market_route_for_klines():
+    """Kline streams are market streams; the legacy root route emits none."""
+    assert WS_BASE_URL == "wss://fstream.binance.com/market/ws"
+
+
 @pytest.mark.asyncio
 async def test_explicit_subscription_requires_binance_acknowledgement():
     class WebSocket:
@@ -87,6 +92,32 @@ async def test_explicit_subscription_requires_binance_acknowledgement():
     assert client._websocket.requests == [{"method": "SUBSCRIBE", "params": ["ethusdt@kline_15m", "ethusdt@kline_1h", "ethusdt@kline_4h"], "id": 1}, {"method": "LIST_SUBSCRIPTIONS", "id": 2}]
     assert health.subscription_acknowledged
     assert health.active_subscriptions == client.stream_names
+
+
+@pytest.mark.asyncio
+async def test_subscription_verification_processes_an_interleaved_kline_event():
+    class WebSocket:
+        def __init__(self):
+            self.requests = []
+            self.responses = iter((
+                '{"result":null,"id":1}',
+                json.dumps(kline("ETHUSDT", closed=False)),
+                '{"result":["ethusdt@kline_15m"],"id":2}',
+            ))
+
+        async def send_json(self, request):
+            self.requests.append(request)
+
+        async def receive(self, timeout):
+            return SimpleNamespace(type=__import__('aiohttp').WSMsgType.TEXT, data=next(self.responses))
+
+    store, health = CandleStore(), HealthStatus()
+    client = BinanceWebSocketClient(("ETHUSDT",), ("15m",), store, EventBus(), health)
+    client._websocket = WebSocket()
+    await client._subscribe()
+    assert health.subscription_acknowledged
+    assert health.messages_by_stream == {("ETHUSDT", "15m"): 1}
+    assert store.get_latest("ETHUSDT", "15m") is not None
 
 
 def test_reconnect_backoff_caps_and_resets():

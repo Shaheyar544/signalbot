@@ -58,5 +58,33 @@ def test_pending_setup_expires_after_configured_retest_window(make_candle):
     breakouts = BreakoutEngine(retest_zone_percent=Decimal("0.2"), maximum_bars_after_breakout=0)
     breakouts.start(_csd_event(breakout_candle))
 
-    assert RetestEngine(breakouts).evaluate(no_retest) is None
+    event = RetestEngine(breakouts).evaluate(no_retest)
+    assert event is not None and event.status is BreakoutStatus.EXPIRED
+    assert event.invalidation_reason == "RETEST_WINDOW_EXPIRED"
     assert breakouts.get("ETHUSDT", "15m").status is BreakoutStatus.EXPIRED
+
+
+def test_retest_engine_records_an_explicit_immediate_reversal_reason(make_candle):
+    breakout_candle = make_candle(offset=0, close="101")
+    failure = replace(make_candle(offset=1, close="99.5"), high=Decimal("100.5"), low=Decimal("99"))
+    breakouts = BreakoutEngine(retest_zone_percent=Decimal("0.2"))
+    setup = breakouts.start(_csd_event(breakout_candle))
+
+    event = RetestEngine(breakouts).evaluate(failure)
+
+    assert event is not None and event.status is BreakoutStatus.INVALIDATED
+    assert event.invalidation_reason == "IMMEDIATE_BREAKOUT_REVERSAL"
+    assert breakouts.get(setup.symbol, setup.timeframe).invalidation_reason == "IMMEDIATE_BREAKOUT_REVERSAL"
+
+
+def test_retest_engine_emits_explicit_expiry_event(make_candle):
+    breakout_candle = make_candle(offset=0, close="101")
+    no_retest = make_candle(offset=1, close="103")
+    breakouts = BreakoutEngine(retest_zone_percent=Decimal("0.2"), maximum_bars_after_breakout=0)
+    setup = breakouts.start(_csd_event(breakout_candle))
+
+    event = RetestEngine(breakouts).evaluate(no_retest)
+
+    assert event is not None and event.status is BreakoutStatus.EXPIRED
+    assert event.invalidation_reason == "RETEST_WINDOW_EXPIRED"
+    assert event.setup.symbol == setup.symbol
