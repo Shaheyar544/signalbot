@@ -30,6 +30,34 @@ def test_dashboard_home_page_is_available(tmp_path: Path):
     assert "Notification delivery" in response.text
 
 
+def test_signal_detail_empty_state_explains_that_no_signal_has_been_persisted(tmp_path: Path):
+    response = TestClient(create_dashboard_app(tmp_path / "engine.db", ("ETHUSDT",))).get("/")
+
+    assert response.status_code == 200
+    assert "No persisted signals yet" in response.text
+    assert "only displays signals actually persisted by the signal engine" in response.text
+    assert "Requested signal is unavailable" in response.text
+    assert "Stale data" in response.text
+
+
+def test_signal_detail_api_returns_not_found_for_an_invalid_signal_id(tmp_path: Path):
+    client = TestClient(create_dashboard_app(tmp_path / "engine.db", ("ETHUSDT",)))
+
+    response = client.get("/api/signals/not-a-persisted-signal")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Signal not found"
+
+
+def test_signal_detail_uses_latest_persisted_signal_or_explicit_query_selection(tmp_path: Path):
+    response = TestClient(create_dashboard_app(tmp_path / "engine.db", ("ETHUSDT",))).get("/")
+
+    assert "state.selectedSignal||state.signals[0]" in response.text
+    assert "URLSearchParams(location.search).get('signal_id')" in response.text
+    assert "Loading persisted signal" in response.text
+    assert "Signal data unavailable" in response.text
+
+
 def test_dashboard_includes_read_only_lightweight_chart_controls(tmp_path: Path):
     response = TestClient(create_dashboard_app(tmp_path / "engine.db", ("ETHUSDT",))).get("/")
 
