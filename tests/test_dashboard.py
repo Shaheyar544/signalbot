@@ -30,6 +30,19 @@ def test_dashboard_home_page_is_available(tmp_path: Path):
     assert "Notification delivery" in response.text
 
 
+def test_dashboard_includes_read_only_lightweight_chart_controls(tmp_path: Path):
+    response = TestClient(create_dashboard_app(tmp_path / "engine.db", ("ETHUSDT",))).get("/")
+
+    assert "lightweight-charts@5.2.1" in response.text
+    assert "CandlestickSeries" in response.text
+    assert "HistogramSeries" in response.text
+    assert "TradingView" in response.text
+    for symbol in ("ETHUSDT", "BTCUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"):
+        assert symbol in response.text
+    for timeframe in ("15m", "1h", "4h"):
+        assert timeframe in response.text
+
+
 def test_status_endpoint_reports_database_and_enabled_symbols(tmp_path: Path):
     app = create_dashboard_app(tmp_path / "engine.db", ("ETHUSDT", "BTCUSDT"))
 
@@ -81,6 +94,15 @@ def test_candles_endpoint_rejects_symbols_that_are_not_enabled(tmp_path: Path):
     response = TestClient(app).get("/api/candles?symbol=BTCUSDT&timeframe=15m")
 
     assert response.status_code == 404
+
+
+def test_chart_supported_symbols_and_timeframes_use_existing_candle_endpoint(tmp_path: Path):
+    symbols = ("ETHUSDT", "BTCUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT")
+    client = TestClient(create_dashboard_app(tmp_path / "engine.db", symbols))
+
+    for symbol in symbols:
+        for timeframe in ("15m", "1h", "4h"):
+            assert client.get(f"/api/candles?symbol={symbol}&timeframe={timeframe}&limit=80").status_code == 200
 
 
 def test_signals_endpoint_returns_persisted_analysis_records(tmp_path: Path):

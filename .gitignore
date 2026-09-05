@@ -4,6 +4,7 @@ __pycache__/
 .pytest-tmp/
 pytest-cache-files-*/
 .venv/
+node_modules/
 .env
 data/*.db
 data/*.db-shm
