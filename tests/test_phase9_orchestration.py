@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+import pytest
 
 from app.backtest.phase9 import run_random_entry_experiment, execute_walk_forward, run_sensitivity_sweep
+from app.backtest.phase9_config import load_sensitivity_config, validate_sensitivity_config
 from app.backtest.walkforward import WalkForwardWindow
 
 
@@ -37,3 +39,21 @@ def test_sensitivity_sweep_reports_all_values_without_selecting_one():
     assert [point.value for point in result.points] == [Decimal(2), Decimal(3), Decimal(4)]
     assert result.plateau_width >= 1
     assert result.selected_value is None
+
+
+def test_sensitivity_config_requires_explicit_dimensions_and_preserves_values():
+    config = {"dimensions": {"left_bars": [2, 3], "right_bars": [2, 3],
+                              "minimum_close_distance_percent": ["0.05", "0.10"],
+                              "retest.zone_percent": ["0.20"],
+                              "maximum_bars_after_breakout": [12, 16]}}
+    assert validate_sensitivity_config(config) == config["dimensions"]
+
+
+def test_sensitivity_config_rejects_unsupported_or_malformed_dimensions(tmp_path):
+    with pytest.raises(ValueError, match="unsupported"):
+        validate_sensitivity_config({"dimensions": {"threshold_signal": [7]}})
+    with pytest.raises(ValueError, match="non-empty"):
+        validate_sensitivity_config({"dimensions": {"left_bars": []}})
+    path = tmp_path / "sensitivity.json"
+    path.write_text('{"dimensions":{"right_bars":[3,4]}}', encoding="utf-8")
+    assert load_sensitivity_config(path) == {"right_bars": [3, 4]}

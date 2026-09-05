@@ -15,6 +15,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.backtest.phase9 import Phase9ValidationOrchestrator
+from app.backtest.phase9_config import load_sensitivity_config
 from app.config.settings import load_settings, normalize_symbol
 from app.storage.database import Database
 from app.storage.repositories import CandleRepository
@@ -30,7 +31,7 @@ async def run(args) -> int:
     try:
         candles = {symbol: [candle for timeframe in settings.historical.timeframes
                             for candle in repository.load_range(symbol, timeframe, start, end)] for symbol in symbols}
-        sensitivity = json.loads(Path(args.sensitivity).read_text(encoding="utf-8")) if args.sensitivity else None
+        sensitivity = load_sensitivity_config(args.sensitivity) if args.sensitivity else None
         result = await Phase9ValidationOrchestrator(settings, baseline_iterations=args.iterations).run(
             candles, sensitivity_dimensions=sensitivity)
         Path(args.report).write_text(json.dumps(result, default=str, indent=2), encoding="utf-8")
