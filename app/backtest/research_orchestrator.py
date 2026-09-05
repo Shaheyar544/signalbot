@@ -6,12 +6,15 @@ from decimal import Decimal
 import csv
 import json
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Sequence
 
 from app.backtest.gate import GoLiveGateSettings, evaluate_gate
 from app.backtest.metrics import calculate_metrics
 from app.backtest.data_integrity import check_integrity
 from app.backtest.phase9 import Phase9ValidationOrchestrator, build_symbol_validation
+from app.backtest.walkforward import rolling_windows
+from app.backtest.research_cache import ResearchReplayCache, replay_cache_key
 from app.backtest.research import (
     LifecycleEvent, cost_stress_report, leave_one_symbol_out, lifecycle_funnel,
     monte_carlo_ordering, reproducibility_metadata, score_analytics,
@@ -36,27 +39,47 @@ class UnifiedResearchOrchestrator:
         self.baseline_iterations = baseline_iterations
         self.monte_carlo_iterations = monte_carlo_iterations
         self.random_seed = random_seed
+        self.cache = ResearchReplayCache()
 
     async def run(self, candles_by_symbol: dict[str, Sequence[Candle]], *,
                   sensitivity_dimensions: dict[str, Sequence[Any]] | None = None,
                   lifecycle_events: Sequence[LifecycleEvent] = ()) -> dict[str, Any]:
-        phase9 = await Phase9ValidationOrchestrator(
-            self.settings, baseline_iterations=self.baseline_iterations,
-        ).run(candles_by_symbol, sensitivity_dimensions=sensitivity_dimensions)
-        per_symbol = {
-            symbol: await build_symbol_validation(self.settings, candles, baseline_iterations=self.baseline_iterations)
-            for symbol, candles in candles_by_symbol.items()
-        }
-        audits = [audit for result in per_symbol.values() for audit in result["audits"]]
-        htf = await self._htf_experiment(candles_by_symbol)
+        timings: dict[str, float] = {}
         metadata = reproducibility_metadata(self.settings, candles_by_symbol, random_seed=self.random_seed)
+        phase9 = Phase9ValidationOrchestrator(self.settings, baseline_iterations=self.baseline_iterations)
+        started = perf_counter()
+        per_symbol = {}
+        for symbol, candles in candles_by_symbol.items():
+            dates = [candle.open_time for candle in candles]
+            key = replay_cache_key(git_commit=metadata["git_commit"], strategy_version=metadata["strategy_version"],
+                                   configuration_hash=metadata["configuration_hash"], symbol=symbol,
+                                   timeframes=tuple(self.settings.historical.timeframes),
+                                   start=min(dates).isoformat() if dates else None, end=max(dates).isoformat() if dates else None,
+                                   variant="canonical-baseline")
+            async def compute(candles=candles):
+                return await build_symbol_validation(self.settings, candles, baseline_iterations=self.baseline_iterations)
+            per_symbol[symbol] = await self.cache.get_or_compute_async(key, compute)
+        timings["baseline_replay_seconds"] = perf_counter() - started
+        audits = [audit for result in per_symbol.values() for audit in result["audits"]]
+        ordered_times = [candle.open_time for candles in candles_by_symbol.values() for candle in candles]
+        windows = rolling_windows(min(ordered_times), max(ordered_times)) if ordered_times else ()
+        started = perf_counter()
+        walk = await phase9._walk_forward(candles_by_symbol, windows)
+        timings["walk_forward_seconds"] = perf_counter() - started
+        started = perf_counter()
+        sensitivity = await phase9._sensitivity(candles_by_symbol, sensitivity_dimensions) if sensitivity_dimensions else None
+        timings["sensitivity_seconds"] = perf_counter() - started
+        complete = bool(windows and sensitivity is not None and not sensitivity.unsupported_parameters and
+                        all(result["baseline"] is not None for result in per_symbol.values()))
+        started = perf_counter()
+        htf = await self._htf_experiment(candles_by_symbol)
+        timings["htf_experiment_seconds"] = perf_counter() - started
         baseline_percentiles = [result["baseline"].percentile for result in per_symbol.values() if result["baseline"]]
         positive_symbols = sum(result["metrics"].expectancy_r > 0 for result in per_symbol.values())
-        walk = phase9["walk_forward"]
         gate_input = {
-            "status": "VALIDATED" if phase9["status"] == "READY_FOR_HUMAN_REVIEW" else phase9["status"],
-            "out_of_sample_trades": walk["oos_trade_count"],
-            "expectancy_r": walk["oos_expectancy_r"],
+            "status": "VALIDATED" if complete else "INCOMPLETE_VALIDATION_ORCHESTRATION",
+            "out_of_sample_trades": walk.oos_trade_count,
+            "expectancy_r": walk.oos_expectancy_r,
             "baseline_percentile": min(baseline_percentiles) if baseline_percentiles else Decimal(0),
             "max_drawdown_r": calculate_metrics(audits).max_drawdown_r,
             "positive_symbols": positive_symbols,
@@ -65,6 +88,13 @@ class UnifiedResearchOrchestrator:
         gate = evaluate_gate(gate_input, GoLiveGateSettings(**(self.settings.go_live_gate or {})))
         lifecycle = lifecycle_funnel(lifecycle_events)
         integrity = self._data_integrity(candles_by_symbol)
+        started = perf_counter()
+        monte_carlo = monte_carlo_ordering(audits, iterations=self.monte_carlo_iterations, random_seed=self.random_seed)
+        timings["monte_carlo_seconds"] = perf_counter() - started
+        started = perf_counter()
+        leave_one_out = leave_one_symbol_out(audits, self.settings.historical.symbols)
+        cost_stress = cost_stress_report(audits, self.settings)
+        timings["aggregation_seconds"] = perf_counter() - started
         methodology = {**metadata, "analysis_scopes": {
             "strategy_performance": "canonical strategy, exit, and cost audit metrics",
             "sequence_risk_monte_carlo": "trade-order permutations only; not evidence of strategy edge",
@@ -76,21 +106,26 @@ class UnifiedResearchOrchestrator:
         return {
             "schema_version": "research-report-v1",
             "research_run_id": metadata["research_run_id"],
-            "status": "READY_FOR_HUMAN_REVIEW" if phase9["status"] == "READY_FOR_HUMAN_REVIEW" else "INCOMPLETE_VALIDATION",
+            "status": "READY_FOR_HUMAN_REVIEW" if complete else "INCOMPLETE_VALIDATION",
             "methodology": methodology,
             "baseline": {symbol: asdict(result["baseline"]) if result["baseline"] else {"status": "NO_ELIGIBLE_ENTRIES"}
                          for symbol, result in per_symbol.items()},
             "score_analysis": score_analytics(audits),
             "htf_experiment": htf,
-            "walk_forward": walk,
-            "sensitivity": phase9["sensitivity"],
-            "monte_carlo": monte_carlo_ordering(audits, iterations=self.monte_carlo_iterations, random_seed=self.random_seed),
-            "leave_one_symbol_out": leave_one_symbol_out(audits, self.settings.historical.symbols),
-            "cost_stress": cost_stress_report(audits, self.settings),
+            "walk_forward": asdict(walk),
+            "sensitivity": asdict(sensitivity) if sensitivity else {"status": "INCOMPLETE_SENSITIVITY_CONFIGURATION"},
+            "monte_carlo": monte_carlo,
+            "leave_one_symbol_out": leave_one_out,
+            "cost_stress": cost_stress,
             "lifecycle_funnel": lifecycle,
             "data_integrity": integrity,
             "go_live_gate": {"result": "PASS" if gate.passed else "FAIL", "failures": list(gate.failures),
                              "observation_mode": gate.observation_mode, "input": gate_input},
+            "performance": {"timings_seconds": timings, "replay_count": {
+                "baseline": len(per_symbol), "walk_forward": len(windows) * len(candles_by_symbol),
+                "sensitivity": sum(len(values) for values in (sensitivity_dimensions or {}).values()) * len(candles_by_symbol),
+                "htf": 3 * len(candles_by_symbol), "total": len(per_symbol) + len(windows) * len(candles_by_symbol) + sum(len(values) for values in (sensitivity_dimensions or {}).values()) * len(candles_by_symbol) + 3 * len(candles_by_symbol)},
+                            "cache": self.cache.stats, "candles_processed_input": sum(len(candles) for candles in candles_by_symbol.values())},
         }
 
     def _data_integrity(self, candles_by_symbol: dict[str, Sequence[Candle]]) -> dict[str, Any]:
@@ -124,7 +159,7 @@ class UnifiedResearchOrchestrator:
             audits = []
             for candles in candles_by_symbol.values():
                 subset = [candle for candle in candles if candle.timeframe in timeframes]
-                validation = await build_symbol_validation(self.settings, subset, baseline_iterations=1)
+                validation = await build_symbol_validation(self.settings, subset, baseline_iterations=1, include_baseline=False)
                 audits.extend(validation["audits"])
             result[name] = {**_metrics_summary(audits),
                             "timeframes": list(timeframes), "canonical_cost_exit_engine": True}

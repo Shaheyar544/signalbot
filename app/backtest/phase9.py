@@ -282,7 +282,7 @@ class Phase9ValidationOrchestrator:
             for value, tuned in zip(values, tuned_settings):
                 audits = []
                 for candles in candles_by_symbol.values():
-                    result = await build_symbol_validation(tuned, candles, baseline_iterations=1)
+                    result = await build_symbol_validation(tuned, candles, baseline_iterations=1, include_baseline=False)
                     audits.extend(result["audits"])
                 metrics = calculate_metrics(audits)
                 points.append(SensitivityPoint(parameter, Decimal(str(value)), metrics.expectancy_r))
@@ -304,7 +304,7 @@ class Phase9ValidationOrchestrator:
                 window_candles = [candle for candle in candles if window.in_sample_start <= candle.open_time < window.out_sample_end]
                 if not window_candles:
                     continue
-                result = await build_symbol_validation(self.settings, window_candles, baseline_iterations=1)
+                result = await build_symbol_validation(self.settings, window_candles, baseline_iterations=1, include_baseline=False)
                 for audit in result["audits"]:
                     if window.out_sample_start <= audit.signal_time < window.out_sample_end:
                         oos_audits.append(audit); out_count += 1
@@ -334,7 +334,8 @@ def _replace_frozen_setting(settings: Settings, parameter: str, value: Any) -> S
     raise ValueError(f"Sensitivity dimension {parameter!r} has no frozen-settings mapping")
 
 
-async def build_symbol_validation(settings: Settings, candles: Sequence[Candle], *, baseline_iterations: int = 1000) -> dict[str, Any]:
+async def build_symbol_validation(settings: Settings, candles: Sequence[Candle], *, baseline_iterations: int = 1000,
+                                  include_baseline: bool = True) -> dict[str, Any]:
     ordered, plans = await collect_strategy_plans(settings, candles)
     simulator = CanonicalTradeSimulator(settings, ordered)
     candidate_results = {id(plan): simulator.simulate(plan, ordered, f"strategy-{index}") for index, plan in enumerate(plans)}
@@ -354,7 +355,7 @@ async def build_symbol_validation(settings: Settings, candles: Sequence[Candle],
         simulate_random,
         trade_count=min(len(audits), len(random_candidates)), iterations=baseline_iterations,
         observed_expectancy=metrics.expectancy_r,
-    ) if audits and random_candidates else None
+    ) if include_baseline and audits and random_candidates else None
     return {"metrics": metrics, "plans": plans, "audits": audits, "baseline": baseline,
             "random_entry_candidates": random_candidates}
 

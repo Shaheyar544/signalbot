@@ -57,3 +57,12 @@ def test_sensitivity_config_rejects_unsupported_or_malformed_dimensions(tmp_path
     path = tmp_path / "sensitivity.json"
     path.write_text('{"dimensions":{"right_bars":[3,4]}}', encoding="utf-8")
     assert load_sensitivity_config(path) == {"right_bars": [3, 4]}
+
+
+@pytest.mark.asyncio
+async def test_build_validation_can_skip_random_baseline_work(monkeypatch):
+    from app.backtest import phase9
+    from app.config.settings import load_settings
+    monkeypatch.setattr(phase9, "run_random_entry_experiment", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("baseline should not run")))
+    result = await phase9.build_symbol_validation(load_settings("tests/fixtures/settings.yaml"), (), include_baseline=False)
+    assert result["baseline"] is None
