@@ -15,7 +15,7 @@ from app.events.models import Candle, CandleClosedEvent, utc_from_millis
 from app.monitoring.health import HealthStatus
 
 LOGGER = logging.getLogger(__name__)
-WS_BASE_URL = "wss://fstream.binance.com/stream?streams="
+WS_BASE_URL = "wss://fstream.binance.com/ws"
 ReconcileCallback = Callable[[], Awaitable[None]]
 
 
@@ -51,6 +51,7 @@ class BinanceWebSocketClient:
         self.on_candle_update = on_candle_update
         self._stop = asyncio.Event()
         self._websocket: aiohttp.ClientWebSocketResponse | None = None
+        self._subscription_id = 1
 
     @property
     def stream_names(self) -> tuple[str, ...]:
@@ -80,11 +81,11 @@ class BinanceWebSocketClient:
         try:
             while not self._stop.is_set():
                 try:
-                    url = self.base_url + "/".join(self.stream_names)
-                    self._websocket = await session.ws_connect(url, heartbeat=30, receive_timeout=self.receive_timeout_seconds)
+                    self._websocket = await session.ws_connect(self.base_url, heartbeat=30, receive_timeout=self.receive_timeout_seconds)
                     self.health.websocket_connected = True
                     self._notify_health_update()
-                    LOGGER.info("WebSocket connected (%d streams)", len(self.stream_names))
+                    await self._subscribe()
+                    LOGGER.info("WebSocket connected and subscribed (%d streams)", len(self.stream_names))
                     if not first_connection:
                         await reconcile()
                     first_connection = False
@@ -96,11 +97,15 @@ class BinanceWebSocketClient:
                             await self.process_message(message.data)
                         elif message.type in {aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR}:
                             break
-                except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as error:
+                except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError) as error:
                     if not self._stop.is_set():
                         LOGGER.warning("WebSocket disconnected: %s", error)
+                        self.health.last_reconnect_error = str(error)
+                        self.health.reconnect_attempts += 1
                 finally:
                     self.health.websocket_connected = False
+                    self.health.subscription_acknowledged = False
+                    self.health.active_subscriptions = ()
                     self._notify_health_update()
                     self._websocket = None
                 if self._stop.is_set() or not self.max_reconnect_delay_seconds:
@@ -116,6 +121,36 @@ class BinanceWebSocketClient:
                 await session.close()
             self._session = None
 
+    async def _subscribe(self) -> None:
+        """Use Binance's explicit public USD-M subscription protocol and require its ACK."""
+        if self._websocket is None:  # pragma: no cover - lifecycle guard
+            raise RuntimeError("WebSocket is not connected")
+        request_id = self._subscription_id
+        self._subscription_id += 1
+        await self._websocket.send_json({"method": "SUBSCRIBE", "params": list(self.stream_names), "id": request_id})
+        LOGGER.info("Subscription request sent: id=%s streams=%s", request_id, ",".join(self.stream_names))
+        acknowledgement = await self._websocket.receive(timeout=self.receive_timeout_seconds)
+        if acknowledgement.type != aiohttp.WSMsgType.TEXT:
+            raise ValueError(f"Binance subscription acknowledgement was {acknowledgement.type.name}")
+        payload = json.loads(acknowledgement.data)
+        if payload.get("id") != request_id or payload.get("result") is not None:
+            raise ValueError(f"Binance subscription rejected: {payload}")
+        verification_id = self._subscription_id
+        self._subscription_id += 1
+        await self._websocket.send_json({"method": "LIST_SUBSCRIPTIONS", "id": verification_id})
+        verification = await self._websocket.receive(timeout=self.receive_timeout_seconds)
+        if verification.type != aiohttp.WSMsgType.TEXT:
+            raise ValueError(f"Binance subscription verification was {verification.type.name}")
+        active = json.loads(verification.data)
+        active_streams = tuple(active.get("result", ()))
+        if active.get("id") != verification_id or set(active_streams) != set(self.stream_names):
+            raise ValueError(f"Binance active subscriptions do not match request: {active}")
+        self.health.subscription_acknowledged = True
+        self.health.active_subscriptions = active_streams
+        self.health.last_reconnect_error = None
+        self._notify_health_update()
+        LOGGER.info("Subscription acknowledgement received: id=%s; %d active streams verified", request_id, len(active_streams))
+
     async def process_message(self, raw_message: str | dict[str, Any]) -> None:
         try:
             payload = json.loads(raw_message) if isinstance(raw_message, str) else raw_message
@@ -129,7 +164,7 @@ class BinanceWebSocketClient:
         if candle.symbol not in self.symbols or candle.timeframe not in self.timeframes:
             LOGGER.warning("Ignoring unexpected stream %s %s", candle.symbol, candle.timeframe)
             return
-        self.health.record_message()
+        self.health.record_message(candle)
         self._notify_health_update()
         previous_candle = self.store.get(candle.symbol, candle.timeframe, candle.open_time)
         self.store.add_candle(candle)

@@ -69,6 +69,12 @@ def test_status_endpoint_includes_the_engine_runtime_snapshot(tmp_path: Path):
     assert response.json()["runtime"] == {
         "running": True, "websocket_connected": True, "database_connected": True, "enabled_symbol_count": 1,
         "last_message_time": None,
+        "first_message_time": None,
+        "active_subscriptions": [],
+        "subscription_acknowledged": False,
+        "messages_by_stream": [],
+        "reconnect_attempts": 0,
+        "last_reconnect_error": None,
         "last_closed_candles": [{"symbol": "ETHUSDT", "timeframe": "15m", "close_time": "2026-01-01T00:14:59+00:00"}],
     }
 

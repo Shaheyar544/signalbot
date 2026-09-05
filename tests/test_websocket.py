@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -68,6 +69,24 @@ async def test_ws_ignores_malformed_and_unsubscribed_messages():
 def test_stream_names_are_dynamic_and_lowercase():
     client = BinanceWebSocketClient(("ETHUSDT", "BTCUSDT"), ("15m", "1h", "4h"), CandleStore(), EventBus(), HealthStatus())
     assert client.stream_names == ("ethusdt@kline_15m", "ethusdt@kline_1h", "ethusdt@kline_4h", "btcusdt@kline_15m", "btcusdt@kline_1h", "btcusdt@kline_4h")
+
+
+@pytest.mark.asyncio
+async def test_explicit_subscription_requires_binance_acknowledgement():
+    class WebSocket:
+        def __init__(self): self.requests = []
+        async def send_json(self, request): self.requests.append(request)
+        async def receive(self, timeout):
+            response = ('{"result":null,"id":1}' if len(self.requests) == 1 else '{"result":["ethusdt@kline_15m","ethusdt@kline_1h","ethusdt@kline_4h"],"id":2}')
+            return SimpleNamespace(type=__import__('aiohttp').WSMsgType.TEXT, data=response)
+
+    health = HealthStatus()
+    client = BinanceWebSocketClient(("ETHUSDT",), ("15m", "1h", "4h"), CandleStore(), EventBus(), health)
+    client._websocket = WebSocket()
+    await client._subscribe()
+    assert client._websocket.requests == [{"method": "SUBSCRIBE", "params": ["ethusdt@kline_15m", "ethusdt@kline_1h", "ethusdt@kline_4h"], "id": 1}, {"method": "LIST_SUBSCRIPTIONS", "id": 2}]
+    assert health.subscription_acknowledged
+    assert health.active_subscriptions == client.stream_names
 
 
 def test_reconnect_backoff_caps_and_resets():

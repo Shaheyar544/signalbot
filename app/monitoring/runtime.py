@@ -23,6 +23,15 @@ class RuntimeHealthSnapshotStore:
             "database_connected": health.database_connected,
             "enabled_symbol_count": health.enabled_symbols,
             "last_message_time": health.last_message_time.isoformat() if health.last_message_time else None,
+            "first_message_time": health.first_message_time.isoformat() if health.first_message_time else None,
+            "active_subscriptions": list(health.active_subscriptions),
+            "subscription_acknowledged": health.subscription_acknowledged,
+            "messages_by_stream": [
+                {"symbol": symbol, "timeframe": timeframe, "count": count}
+                for (symbol, timeframe), count in sorted(health.messages_by_stream.items())
+            ],
+            "reconnect_attempts": health.reconnect_attempts,
+            "last_reconnect_error": health.last_reconnect_error,
             "last_closed_candles": [
                 {"symbol": symbol, "timeframe": timeframe, "close_time": close_time.isoformat()}
                 for (symbol, timeframe), close_time in sorted(health.last_closed_candle.items())

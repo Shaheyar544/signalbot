@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import time
 from typing import Any
 
 from app.events.models import Candle
@@ -28,7 +29,14 @@ class LiveMarketSnapshotStore:
         payload = {"updated_at": datetime.now(timezone.utc).isoformat(), "candles": list(self._candles.values())}
         temporary_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
         temporary_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-        temporary_path.replace(self.path)
+        for attempt in range(4):
+            try:
+                temporary_path.replace(self.path)
+                return
+            except PermissionError:
+                if attempt == 3:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
 
     def read(self) -> dict[str, Any] | None:
         try:
