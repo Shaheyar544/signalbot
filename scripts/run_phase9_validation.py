@@ -38,7 +38,11 @@ async def run(args) -> int:
         result = await UnifiedResearchOrchestrator(
             settings, baseline_iterations=args.iterations, monte_carlo_iterations=args.monte_carlo_iterations,
             random_seed=args.random_seed,
-        ).run(candles, sensitivity_dimensions=sensitivity)
+        ).run(candles, sensitivity_dimensions=sensitivity,
+              checkpoint_root=args.checkpoint_dir,
+              progress_path=args.progress,
+              partial_report_path=args.report,
+              checkpoint_mode="resume" if args.resume else "restart" if args.restart else "fresh")
         result["performance"]["timings_seconds"]["data_loading_seconds"] = loading_seconds
         write_research_outputs(result, json_path=args.report, csv_path=args.csv)
         gate = result["go_live_gate"]
@@ -64,6 +68,13 @@ def main() -> int:
     parser.add_argument("--csv", default="data/phase9_summary.csv")
     parser.add_argument("--profile", action="store_true", help="print per-phase timing and replay-count instrumentation")
     parser.add_argument("--sensitivity", help="JSON mapping of frozen sensitivity dimensions to values")
+    resume_group = parser.add_mutually_exclusive_group()
+    resume_group.add_argument("--resume", action="store_true", help="reuse only compatible completed checkpoints")
+    resume_group.add_argument("--restart", action="store_true", help="discard checkpoints for this exact research identity")
+    parser.add_argument("--checkpoint-dir", default="data/research_checkpoints",
+                        help="local durable checkpoint root (default: data/research_checkpoints)")
+    parser.add_argument("--progress", default="data/research_progress.json",
+                        help="atomic progress artifact path")
     return asyncio.run(run(parser.parse_args()))
 
 
