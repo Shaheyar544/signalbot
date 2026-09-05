@@ -34,6 +34,16 @@ async def test_ws_parses_forming_then_closed_once():
 
 
 @pytest.mark.asyncio
+async def test_ws_relays_each_intrabar_update_without_extra_closed_events():
+    updates = []
+    client = BinanceWebSocketClient(("ETHUSDT",), ("15m",), CandleStore(), EventBus(), HealthStatus(), on_candle_update=updates.append)
+    await client.process_message(kline(closed=False, close="101"))
+    await client.process_message(kline(closed=False, close="102"))
+    assert [str(item.close) for item in updates] == ["101", "102"]
+    assert not updates[-1].is_closed
+
+
+@pytest.mark.asyncio
 async def test_ws_maintains_simultaneous_pairs_without_collision():
     events = []
     bus = EventBus(); bus.subscribe_candle_closed(lambda event: events.append(event.symbol))

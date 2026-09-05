@@ -15,6 +15,7 @@ from app.data.candles import CandleStore
 from app.events.bus import EventBus
 from app.monitoring.health import HealthStatus
 from app.monitoring.runtime import RuntimeHealthSnapshotStore
+from app.monitoring.live_market import LiveMarketSnapshotStore
 from app.notifications.dispatcher import NotificationDispatcher
 from app.notifications.factory import configured_providers
 from app.signals.models import build_signal_id
@@ -54,6 +55,7 @@ async def run(config_path: str, *, force_live: bool = False, acknowledge_risk: b
     database.open()
     health = HealthStatus(running=True, database_connected=True, enabled_symbols=len(settings.enabled_symbols))
     runtime_health = RuntimeHealthSnapshotStore(settings.database_path.with_suffix(".health.json"))
+    live_market = LiveMarketSnapshotStore(settings.database_path.with_suffix(".live.json"))
 
     def publish_health() -> None:
         runtime_health.write(health)
@@ -108,10 +110,15 @@ async def run(config_path: str, *, force_live: bool = False, acknowledge_risk: b
         async def reconcile() -> None:
             for symbol in valid_symbols:
                 for timeframe in settings.timeframes:
-                    for candle in await rest.fetch_candles(symbol, timeframe, settings.historical_candle_limit):
+                    reconciled_candles = await rest.fetch_candles(symbol, timeframe, settings.historical_candle_limit)
+                    for candle in reconciled_candles:
                         store.add_candle(candle)
                         if candle.is_closed:
                             health.record_closed_candle(candle)
+                    if reconciled_candles:
+                        # Seed the read-only relay with the latest public candle. Subsequent
+                        # WebSocket updates replace it while the interval is forming.
+                        live_market.update(reconciled_candles[-1])
             publish_health()
             logging.info("REST reconciliation complete")
 
@@ -119,6 +126,7 @@ async def run(config_path: str, *, force_live: bool = False, acknowledge_risk: b
         websocket = BinanceWebSocketClient(valid_symbols, settings.timeframes, store, bus, health,
             settings.websocket.max_reconnect_delay_seconds, settings.websocket.receive_timeout_seconds)
         websocket.on_health_update = publish_health
+        websocket.on_candle_update = live_market.update
         loop = asyncio.get_running_loop()
         shutdown = asyncio.Event()
         def request_shutdown() -> None:

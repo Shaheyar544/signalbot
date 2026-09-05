@@ -39,6 +39,7 @@ class BinanceWebSocketClient:
         bus: EventBus, health: HealthStatus, max_reconnect_delay_seconds: int = 60,
         receive_timeout_seconds: int = 90, session: aiohttp.ClientSession | None = None,
         base_url: str = WS_BASE_URL, on_health_update: Callable[[], None] | None = None,
+        on_candle_update: Callable[[Candle], None] | None = None,
     ) -> None:
         self.symbols, self.timeframes = symbols, timeframes
         self.store, self.bus, self.health = store, bus, health
@@ -47,6 +48,7 @@ class BinanceWebSocketClient:
         self._session, self._owns_session = session, session is None
         self.base_url = base_url
         self.on_health_update = on_health_update
+        self.on_candle_update = on_candle_update
         self._stop = asyncio.Event()
         self._websocket: aiohttp.ClientWebSocketResponse | None = None
 
@@ -131,6 +133,11 @@ class BinanceWebSocketClient:
         self._notify_health_update()
         previous_candle = self.store.get(candle.symbol, candle.timeframe, candle.open_time)
         self.store.add_candle(candle)
+        if self.on_candle_update is not None:
+            try:
+                self.on_candle_update(candle)
+            except Exception as error:  # Dashboard publication must never affect the engine.
+                LOGGER.warning("Could not publish live candle: %s", error)
         if candle.is_closed and (previous_candle is None or not previous_candle.is_closed):
             self.health.record_closed_candle(candle)
             self._notify_health_update()
