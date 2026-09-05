@@ -43,3 +43,25 @@ confirmation:
 
 risk:
   stop_buffer_percent: 0
+
+cost:
+  taker_fee_percent: 0.05
+  maker_fee_percent: 0.02
+  entry_order_type: taker
+  exit_order_type: taker
+  slippage_percent: 0.02
+  slippage_percent_stop: 0.05
+  funding_rate_fixed_percent: 0.01
+
+exit_policy:
+  name: scaled
+  legs:
+    - target_r: 1.0
+      size_percent: 50
+    - target_r: 2.0
+      size_percent: 25
+    - target_r: 3.0
+      size_percent: 25
+  move_stop_to_breakeven_after_leg: 1
+  breakeven_offset_r: 0.1
+  time_stop_bars: 48

@@ -76,6 +76,36 @@ class RiskSettings:
 
 
 @dataclass(frozen=True)
+class CostSettings:
+    taker_fee_percent: Decimal = Decimal("0.05")
+    maker_fee_percent: Decimal = Decimal("0.02")
+    entry_order_type: str = "taker"
+    exit_order_type: str = "taker"
+    slippage_percent: Decimal = Decimal("0.02")
+    slippage_percent_stop: Decimal = Decimal("0.05")
+    funding_rate_fixed_percent: Decimal = Decimal("0.01")
+
+
+@dataclass(frozen=True)
+class ExitLeg:
+    target_r: Decimal
+    size_percent: Decimal
+
+
+@dataclass(frozen=True)
+class ExitPolicySettings:
+    name: str = "scaled"
+    legs: tuple[ExitLeg, ...] = (
+        ExitLeg(Decimal("1.0"), Decimal("50")),
+        ExitLeg(Decimal("2.0"), Decimal("25")),
+        ExitLeg(Decimal("3.0"), Decimal("25")),
+    )
+    move_stop_to_breakeven_after_leg: int | None = 1
+    breakeven_offset_r: Decimal = Decimal("0.1")
+    time_stop_bars: int | None = 48
+
+
+@dataclass(frozen=True)
 class Settings:
     symbols: dict[str, bool]
     invalid_symbols: tuple[str, ...]
@@ -90,6 +120,8 @@ class Settings:
     confirmation: ConfirmationSettings
     scoring: ScoringSettings
     risk: RiskSettings
+    cost: CostSettings
+    exit_policy: ExitPolicySettings
 
     @property
     def enabled_symbols(self) -> tuple[str, ...]:
@@ -172,6 +204,44 @@ def load_settings(path: str | Path = "config.yaml") -> Settings:
     stop_buffer = Decimal(str(risk.get("stop_buffer_percent", "0")))
     if stop_buffer < 0:
         raise ValueError("risk stop_buffer_percent cannot be negative")
+    cost = raw.get("cost", {})
+    cost_values = {
+        name: Decimal(str(cost.get(name, default)))
+        for name, default in {
+            "taker_fee_percent": "0.05", "maker_fee_percent": "0.02",
+            "slippage_percent": "0.02", "slippage_percent_stop": "0.05",
+            "funding_rate_fixed_percent": "0.01",
+        }.items()
+    }
+    if any(value < 0 for value in cost_values.values()):
+        raise ValueError("cost values cannot be negative")
+    entry_order_type = str(cost.get("entry_order_type", "taker")).lower()
+    exit_order_type = str(cost.get("exit_order_type", "taker")).lower()
+    if entry_order_type not in {"taker", "maker"} or exit_order_type not in {"taker", "maker"}:
+        raise ValueError("cost entry_order_type and exit_order_type must be 'taker' or 'maker'")
+    exit_policy = raw.get("exit_policy", {})
+    policy_name = str(exit_policy.get("name", "scaled"))
+    if policy_name not in {"single_target", "scaled"}:
+        raise ValueError("exit_policy name must be 'single_target' or 'scaled'")
+    raw_legs = exit_policy.get("legs", [
+        {"target_r": "1.0", "size_percent": "50"},
+        {"target_r": "2.0", "size_percent": "25"},
+        {"target_r": "3.0", "size_percent": "25"},
+    ])
+    if not isinstance(raw_legs, list) or not raw_legs:
+        raise ValueError("exit_policy legs must be a non-empty list")
+    legs = tuple(ExitLeg(Decimal(str(item["target_r"])), Decimal(str(item["size_percent"]))) for item in raw_legs)
+    if any(leg.target_r <= 0 or leg.size_percent <= 0 for leg in legs) or sum(leg.size_percent for leg in legs) != Decimal("100"):
+        raise ValueError("exit_policy leg targets and sizes must be positive and sizes must sum to 100")
+    move_stop = exit_policy.get("move_stop_to_breakeven_after_leg", 1)
+    move_stop = int(move_stop) if move_stop is not None else None
+    if move_stop is not None and not 1 <= move_stop <= len(legs):
+        raise ValueError("exit_policy move_stop_to_breakeven_after_leg must name an existing leg")
+    time_stop = exit_policy.get("time_stop_bars", 48)
+    time_stop = int(time_stop) if time_stop is not None else None
+    if time_stop is not None and time_stop <= 0:
+        raise ValueError("exit_policy time_stop_bars must be positive when set")
+    breakeven_offset = Decimal(str(exit_policy.get("breakeven_offset_r", "0.1")))
     return Settings(
         symbols=symbols,
         invalid_symbols=tuple(invalid_symbols),
@@ -190,4 +260,6 @@ def load_settings(path: str | Path = "config.yaml") -> Settings:
         confirmation=ConfirmationSettings(bullish_rsi, bearish_rsi, volume_ratio),
         scoring=ScoringSettings(**scoring_values),
         risk=RiskSettings(stop_buffer),
+        cost=CostSettings(entry_order_type=entry_order_type, exit_order_type=exit_order_type, **cost_values),
+        exit_policy=ExitPolicySettings(policy_name, legs, move_stop, breakeven_offset, time_stop),
     )
