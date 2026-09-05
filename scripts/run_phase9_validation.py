@@ -14,8 +14,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.backtest.phase9 import Phase9ValidationOrchestrator
 from app.backtest.phase9_config import load_sensitivity_config
+from app.backtest.research_orchestrator import UnifiedResearchOrchestrator, write_research_outputs
 from app.config.settings import load_settings, normalize_symbol
 from app.storage.database import Database
 from app.storage.repositories import CandleRepository
@@ -32,10 +32,13 @@ async def run(args) -> int:
         candles = {symbol: [candle for timeframe in settings.historical.timeframes
                             for candle in repository.load_range(symbol, timeframe, start, end)] for symbol in symbols}
         sensitivity = load_sensitivity_config(args.sensitivity) if args.sensitivity else None
-        result = await Phase9ValidationOrchestrator(settings, baseline_iterations=args.iterations).run(
-            candles, sensitivity_dimensions=sensitivity)
-        Path(args.report).write_text(json.dumps(result, default=str, indent=2), encoding="utf-8")
-        print(f"report={args.report} status={result['status']}")
+        result = await UnifiedResearchOrchestrator(
+            settings, baseline_iterations=args.iterations, monte_carlo_iterations=args.monte_carlo_iterations,
+            random_seed=args.random_seed,
+        ).run(candles, sensitivity_dimensions=sensitivity)
+        write_research_outputs(result, json_path=args.report, csv_path=args.csv)
+        gate = result["go_live_gate"]
+        print(f"report={args.report} status={result['status']} gate={gate['result']} trades={result['leave_one_symbol_out']['combined']['trade_count']}")
         return 0 if result["status"] == "READY_FOR_HUMAN_REVIEW" else 2
     finally:
         database.close()
@@ -48,7 +51,10 @@ def main() -> int:
     parser.add_argument("--start")
     parser.add_argument("--end")
     parser.add_argument("--iterations", type=int, default=1000)
+    parser.add_argument("--monte-carlo-iterations", type=int, default=1000)
+    parser.add_argument("--random-seed", type=int, default=7)
     parser.add_argument("--report", default="data/phase9_report.json")
+    parser.add_argument("--csv", default="data/phase9_summary.csv")
     parser.add_argument("--sensitivity", help="JSON mapping of frozen sensitivity dimensions to values")
     return asyncio.run(run(parser.parse_args()))
 

@@ -80,3 +80,19 @@ docker compose exec signal-engine python scripts/health_check.py --database /app
 The named `signal_data` volume retains SQLite data across container restarts. Stop the service with `docker compose down`; do not use `-v` unless intentionally removing persisted data.
 
 `config.yaml` controls symbols. To enable BTCUSDT (or another supported USD-M Futures symbol), add/configure the symbol and set `enabled: true`; no code changes are required. The engine validates every enabled symbol against Binance and skips invalid or unsupported symbols without stopping the other streams.
+
+## Research validation
+
+Run the unified, read-only research report against stored historical candles:
+
+```powershell
+python scripts\run_phase9_validation.py --config config.yaml --sensitivity path\to\approved-sensitivity.json --report data\research_report.json --csv data\research_summary.csv
+```
+
+It reuses the canonical strategy, exit policy, and cost model. The versioned
+JSON report includes baseline, score bands, HTF variants, calendar
+walk-forward, approved sensitivity observations, Monte Carlo trade-order risk,
+leave-one-symbol-out results, cost stresses, lifecycle-data availability,
+reproducibility metadata, and the conservative go-live gate result. It never
+places orders or changes production strategy settings. A non-zero exit status
+means the report is incomplete, not that the strategy has failed or succeeded.
