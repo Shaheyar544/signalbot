@@ -2,14 +2,14 @@ symbols:
   ETHUSDT:
     enabled: true
   BTCUSDT:
-    enabled: false
+    enabled: true
   SOLUSDT:
-    enabled: false
+    enabled: true
   BNBUSDT:
-    enabled: false
+    enabled: true
 
   XRPUSDT:
-    enabled: false
+    enabled: true
 
 timeframes:
   primary: 15m
