@@ -46,12 +46,13 @@ async def test_clean_and_resumed_small_research_fixture_are_numerically_equivale
         {"ETHUSDT": ()}, sensitivity_dimensions={"left_bars": [3]})
     resumed = await UnifiedResearchOrchestrator(settings, baseline_iterations=1, monte_carlo_iterations=1).run(
         {"ETHUSDT": ()}, sensitivity_dimensions={"left_bars": [3]}, checkpoint_root=tmp_path,
-        checkpoint_mode="restart")
+        checkpoint_mode="restart", progress_path=tmp_path / "progress.json")
     resumed_again = await UnifiedResearchOrchestrator(settings, baseline_iterations=1, monte_carlo_iterations=1).run(
         {"ETHUSDT": ()}, sensitivity_dimensions={"left_bars": [3]}, checkpoint_root=tmp_path,
         checkpoint_mode="resume")
     for field in ("baseline", "walk_forward", "sensitivity", "htf_experiment", "monte_carlo", "leave_one_symbol_out", "cost_stress"):
         assert clean[field] == resumed[field] == resumed_again[field]
+    assert (tmp_path / "progress.json").exists()
 
 
 @pytest.mark.asyncio

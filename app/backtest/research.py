@@ -279,7 +279,7 @@ def _jsonable(value: Any) -> Any:
 
 def reproducibility_metadata(settings: Settings, candles_by_symbol: dict[str, Sequence[Any]], *, random_seed: int,
                             strategy_version: str = "V1_FROZEN", methodology_id: str = "signalbot-research-v1",
-                            git_commit: str | None = None) -> dict[str, Any]:
+                            git_commit: str | None = None, validation_label: str | None = None) -> dict[str, Any]:
     snapshot = _jsonable(asdict(settings))
     configuration_hash = sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     dates = [candle.open_time for candles in candles_by_symbol.values() for candle in candles]
@@ -294,11 +294,12 @@ def reproducibility_metadata(settings: Settings, candles_by_symbol: dict[str, Se
                 "start": min(dates).isoformat() if dates else None, "end": max(dates).isoformat() if dates else None,
                 "timeframes": list(settings.timeframes), "random_seed": random_seed, "strategy_version": strategy_version,
                 "methodology_id": methodology_id, "git_commit": commit, "cost_assumptions": _jsonable(asdict(settings.cost)),
-                "exit_policy": _jsonable(asdict(settings.exit_policy))}
+                "exit_policy": _jsonable(asdict(settings.exit_policy)), "validation_label": validation_label}
     research_run_id = sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
     return {"research_run_id": research_run_id, "git_commit": commit, "strategy_version": strategy_version,
             "methodology_id": methodology_id, "configuration_hash": configuration_hash,
             "configuration_snapshot": snapshot, "symbols": identity["symbols"],
             "timeframes": list(settings.timeframes), "historical_date_range": {"start": identity["start"], "end": identity["end"]},
             "cost_assumptions": _jsonable(asdict(settings.cost)), "exit_policy": _jsonable(asdict(settings.exit_policy)),
-            "random_seed": random_seed, "run_timestamp": datetime.now(timezone.utc).isoformat()}
+            "random_seed": random_seed, "validation_label": validation_label,
+            "run_timestamp": datetime.now(timezone.utc).isoformat()}

@@ -50,11 +50,13 @@ class UnifiedResearchOrchestrator:
                   checkpoint_root: str | Path | None = None,
                   progress_path: str | Path | None = None,
                   partial_report_path: str | Path | None = None,
-                  checkpoint_mode: str = "fresh") -> dict[str, Any]:
+                  checkpoint_mode: str = "fresh",
+                  validation_label: str | None = None) -> dict[str, Any]:
         timings: dict[str, float] = {}
-        metadata = reproducibility_metadata(self.settings, candles_by_symbol, random_seed=self.random_seed)
+        metadata = reproducibility_metadata(self.settings, candles_by_symbol, random_seed=self.random_seed,
+                                            validation_label=validation_label)
         dataset_identity = _dataset_identity(candles_by_symbol)
-        checkpoint_identity = {key: metadata[key] for key in ("research_run_id", "git_commit", "configuration_hash", "methodology_id", "random_seed")}
+        checkpoint_identity = {key: metadata[key] for key in ("research_run_id", "git_commit", "configuration_hash", "methodology_id", "random_seed", "validation_label")}
         checkpoint_identity["dataset_identity"] = dataset_identity
         checkpoint_store = ResearchCheckpointStore(checkpoint_root, checkpoint_identity, mode=checkpoint_mode) if checkpoint_root else None
         sensitivity_units = sum(len(values) for values in (sensitivity_dimensions or {}).values())
@@ -66,13 +68,14 @@ class UnifiedResearchOrchestrator:
         def update(phase: str, item: str) -> None:
             nonlocal completed_units
             completed_units += 1
+            cache_stats = self.cache.stats
             if progress:
-                state = progress.update(phase, completed_units=completed_units, cache_hits=self.cache.hits,
-                                        cache_misses=self.cache.misses, replay_count=completed_units)
+                state = progress.update(phase, completed_units=completed_units, cache_hits=cache_stats["hits"],
+                                        cache_misses=cache_stats["misses"], replay_count=completed_units)
                 print(f"{phase.upper()} {item} | {completed_units}/{unit_total} | elapsed={state['elapsed_seconds']:.1f}s | eta={state['estimated_remaining_seconds']!s}s")
             if partial_report_path:
-                partial["progress"] = progress.update(phase, completed_units=completed_units, cache_hits=self.cache.hits,
-                                                       cache_misses=self.cache.misses, replay_count=completed_units) if progress else {}
+                partial["progress"] = progress.update(phase, completed_units=completed_units, cache_hits=cache_stats["hits"],
+                                                       cache_misses=cache_stats["misses"], replay_count=completed_units) if progress else {}
                 atomic_json_write(partial_report_path, partial)
         phase9 = Phase9ValidationOrchestrator(self.settings, baseline_iterations=self.baseline_iterations)
         loading_parameters = {"dataset_identity": dataset_identity}
@@ -139,7 +142,9 @@ class UnifiedResearchOrchestrator:
         update("monte-carlo", f"{self.monte_carlo_iterations}/{self.monte_carlo_iterations}")
         timings["monte_carlo_seconds"] = perf_counter() - started
         started = perf_counter()
-        leave_one_out = leave_one_symbol_out(audits, self.settings.historical.symbols)
+        leave_one_out = (leave_one_symbol_out(audits, self.settings.historical.symbols)
+                         if len(self.settings.historical.symbols) > 1
+                         else {"status": "NOT_APPLICABLE_SINGLE_SYMBOL_UNIVERSE", "symbols": list(self.settings.historical.symbols)})
         cost_stress = cost_stress_report(audits, self.settings)
         timings["aggregation_seconds"] = perf_counter() - started
         update("aggregation", "1/1")
@@ -155,6 +160,7 @@ class UnifiedResearchOrchestrator:
             "schema_version": "research-report-v1",
             "research_run_id": metadata["research_run_id"],
             "status": "READY_FOR_HUMAN_REVIEW" if complete else "INCOMPLETE_VALIDATION",
+            "validation_scope": validation_label or ("OFFICIAL_MULTI_SYMBOL_VALIDATION" if len(candles_by_symbol) > 1 else "SINGLE_SYMBOL_DIAGNOSTIC"),
             "methodology": {**methodology, "dataset_identity": dataset_identity,
                               "checkpoint_mode": checkpoint_mode},
             "baseline": {symbol: asdict(result["baseline"]) if result["baseline"] else {"status": "NO_ELIGIBLE_ENTRIES"}
@@ -177,8 +183,8 @@ class UnifiedResearchOrchestrator:
                             "cache": self.cache.stats, "candles_processed_input": sum(len(candles) for candles in candles_by_symbol.values()),
                             "phase_elapsed_seconds": timings},
         }
-        if progress: progress.update("completed", completed_units=completed_units, cache_hits=self.cache.hits,
-                                     cache_misses=self.cache.misses, replay_count=report["performance"]["replay_count"]["total"],
+        if progress: progress.update("completed", completed_units=completed_units, cache_hits=self.cache.stats["hits"],
+                                     cache_misses=self.cache.stats["misses"], replay_count=report["performance"]["replay_count"]["total"],
                                      status="INCOMPLETE" if progress.errors else "COMPLETED")
         if partial_report_path:
             report["status"] = report["status"]
@@ -327,4 +333,5 @@ def write_research_outputs(report: dict[str, Any], *, json_path: str | Path, csv
             writer = csv.DictWriter(handle, fieldnames=("scope", "trade_count", "expectancy_r", "total_r", "max_drawdown_r", "profit_factor"))
             writer.writeheader()
             for scope, values in report["leave_one_symbol_out"].items():
-                writer.writerow({"scope": scope, **{name: values.get(name) for name in writer.fieldnames[1:]}})
+                if isinstance(values, dict):
+                    writer.writerow({"scope": scope, **{name: values.get(name) for name in writer.fieldnames[1:]}})
