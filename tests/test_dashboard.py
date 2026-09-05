@@ -234,6 +234,19 @@ def test_phase9_endpoint_serves_only_a_persisted_report(tmp_path: Path):
     assert response.json()["report"]["walk_forward"]["oos_trade_count"] == 0
 
 
+def test_eth_seven_day_diagnostic_endpoint_serves_only_a_labeled_persisted_report(tmp_path: Path):
+    report_path = tmp_path / "eth_7day_signal_test.json"
+    client = TestClient(create_dashboard_app(tmp_path / "engine.db", ("ETHUSDT",), signal_test_report_path=report_path))
+    assert client.get("/api/diagnostics/eth-7day").json() == {
+        "available": False, "status": "REPORT_UNAVAILABLE", "report": None,
+    }
+    report_path.write_text('{"validation_scope":"ETHUSDT_7DAY_SIGNAL_TEST","signal_summary":{"total_signals":6}}', encoding="utf-8")
+    response = client.get("/api/diagnostics/eth-7day")
+    assert response.status_code == 200
+    assert response.json()["available"] is True
+    assert response.json()["report"]["signal_summary"]["total_signals"] == 6
+
+
 def test_notifications_endpoint_returns_delivery_attempts_for_a_signal(tmp_path: Path):
     database_path = tmp_path / "engine.db"
     database = Database(database_path); database.open()

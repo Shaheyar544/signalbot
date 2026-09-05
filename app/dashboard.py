@@ -48,8 +48,8 @@ def _dashboard_html() -> str:
 </style></head><body><a class="skip" href="#app">Skip to main content</a><div class="app"><header class="topbar"><div class="brand"><span class="mark" aria-hidden="true">S</span>signalbot</div><nav class="nav desktop-nav" aria-label="Primary navigation"><button data-view="dashboard">Overview</button><button data-view="signal">Signal detail</button><button data-view="monitor">Market monitor</button><button data-view="backtests">Backtests</button><button data-view="validation">Phase 9 validation</button><button data-view="health">System health</button></nav><details class="mobile-nav"><summary>Navigate</summary><nav class="nav" aria-label="Mobile navigation"><button data-view="dashboard">Overview</button><button data-view="signal">Signal detail</button><button data-view="monitor">Market monitor</button><button data-view="backtests">Backtests</button><button data-view="validation">Phase 9 validation</button><button data-view="health">System health</button></nav></details><div class="safety"><i aria-hidden="true"></i>Observation only</div></header><p id="app-status" role="status" aria-live="polite" class="sr-only"></p><main id="app" tabindex="-1"><div class="page-head"><div><p class="eyebrow">Multi-Pair CSD Signal Engine · Read-only market intelligence</p><h1>Loading Signalbot…</h1></div></div><div class="grid metrics"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></main></div>
 <script src="https://unpkg.com/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js"></script>
 <script>
-const el=document.querySelector('#app'),statusEl=document.querySelector('#app-status'),views=['dashboard','signal','monitor','backtests','validation','health'];
-const state={status:null,signals:[],candles:{},backtests:[],phase9:null,selectedSignal:null,selectedRun:null,backtestDetail:null,manual:{result:null,loading:false,error:null},loadedAt:null,sections:{status:{loading:true},signals:{loading:true},candles:{loading:true},backtests:{loading:true},phase9:{loading:true}}};
+const el=document.querySelector('#app'),statusEl=document.querySelector('#app-status'),views=['dashboard','signal','monitor','backtests','validation','diagnostic','health'];
+const state={status:null,signals:[],candles:{},backtests:[],phase9:null,diagnostic:null,selectedSignal:null,selectedRun:null,backtestDetail:null,manual:{result:null,loading:false,error:null},loadedAt:null,sections:{status:{loading:true},signals:{loading:true},candles:{loading:true},backtests:{loading:true},phase9:{loading:true},diagnostic:{loading:true}}};
 state.chart={symbol:'ETHUSDT',timeframe:'15m',loading:false,error:null,cache:new Map(),evidence:new Map(),requestId:0};
 const esc=v=>String(v??'—').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const fmt=v=>v===null||v===undefined||v===''?'—':esc(v);const time=v=>{if(!v)return 'Not available';const d=new Date(v);return Number.isNaN(d)?'Not available':d.toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'})};const age=v=>{if(!v)return 'unavailable';const ms=Date.now()-new Date(v).getTime();if(!Number.isFinite(ms)||ms<0)return 'unavailable';const mins=Math.floor(ms/60000);if(mins<1)return 'just now';if(mins<60)return `${mins}m ago`;const hrs=Math.floor(mins/60);return hrs<48?`${hrs}h ago`:`${Math.floor(hrs/24)}d ago`};
@@ -120,7 +120,7 @@ function selectChart(option,value){if(option==='symbol'&&!chartSymbolIsEnabled(v
 def create_dashboard_app(
     database_path: str | Path, enabled_symbols: tuple[str, ...], health_snapshot_path: str | Path | None = None,
     phase9_report_path: str | Path | None = None, live_snapshot_path: str | Path | None = None,
-    strategy_settings: Settings | None = None,
+    strategy_settings: Settings | None = None, signal_test_report_path: str | Path | None = None,
 ) -> FastAPI:
     """Create the read-only dashboard application over the engine SQLite data."""
     path = Path(database_path)
@@ -128,6 +128,7 @@ def create_dashboard_app(
     health_store = RuntimeHealthSnapshotStore(health_snapshot_path or path.with_suffix(".health.json"))
     live_store = LiveMarketSnapshotStore(live_snapshot_path or path.with_suffix(".live.json"))
     validation_report_path = Path(phase9_report_path or path.with_name("phase9_report.json"))
+    signal_test_path = Path(signal_test_report_path or path.with_name("eth_7day_signal_test.json"))
     app = FastAPI(title="Multi-Pair CSD Signal Engine Dashboard", docs_url=None, redoc_url=None)
 
     @app.get("/", response_class=HTMLResponse)
@@ -273,6 +274,17 @@ def create_dashboard_app(
         if not isinstance(payload, dict):
             return {"available": False, "status": "INVALID_REPORT", "report": None}
         return {"available": True, "status": payload.get("status", "UNKNOWN"), "report": payload}
+
+    @app.get("/api/diagnostics/eth-7day")
+    def eth_seven_day_signal_test() -> dict[str, Any]:
+        """Serve only the locally generated read-only seven-day diagnostic."""
+        try:
+            payload = json.loads(signal_test_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return {"available": False, "status": "REPORT_UNAVAILABLE", "report": None}
+        if not isinstance(payload, dict) or payload.get("validation_scope") != "ETHUSDT_7DAY_SIGNAL_TEST":
+            return {"available": False, "status": "INVALID_REPORT", "report": None}
+        return {"available": True, "status": "DIAGNOSTIC_ONLY", "report": payload}
 
     @app.get("/api/notifications")
     def notifications(signal_id: str = Query(min_length=1)) -> dict[str, Any]:
