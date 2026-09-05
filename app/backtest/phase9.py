@@ -225,7 +225,10 @@ class CanonicalTradeSimulator:
                           plan.assessment.score.total, str(plan.assessment.score.classification), trade.closed_at,
                           trade.exit_reason, gross, costs.total_r, gross - costs.total_r, trade.resolution_method,
                           trade.ambiguous_intrabar_events > 0, trade.bars_since_entry, trade.mfe_r, trade.mae_r,
-                          plan.analysis.symbol, plan.analysis.regime, None)
+                          plan.analysis.symbol, plan.analysis.regime, None, trade.entered_at, trade.exit_price,
+                          plan.assessment.confirmation.one_hour, plan.assessment.confirmation.four_hour,
+                          plan.assessment.confirmation.ema, plan.assessment.confirmation.rsi,
+                          plan.assessment.confirmation.macd, plan.assessment.confirmation.volume, True, True, True)
 
 
 class Phase9ValidationOrchestrator:

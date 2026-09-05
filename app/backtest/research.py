@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -56,7 +56,7 @@ def _summary(trades: Sequence[TradeAudit]) -> dict[str, Any]:
     metrics = calculate_metrics(trades)
     values = [trade.net_r for trade in trades if trade.net_r is not None]
     return {
-        "status": "OK" if values else "NO_NET_RESULTS",
+        "status": "OK" if values else "INCOMPLETE_DATA",
         "trade_count": metrics.trade_count,
         "win_rate": metrics.win_rate,
         "average_r": metrics.expectancy_r,
@@ -85,14 +85,24 @@ def score_analytics(trades: Sequence[TradeAudit]) -> dict[str, Any]:
     for band in SCORE_BANDS:
         items = [trade for trade in trades if int(trade.score_total) == band]
         by_score[str(band)] = _summary(items)
+    fields = {
+        "ema": "confirmation_ema", "rsi": "confirmation_rsi", "macd": "confirmation_macd",
+        "volume": "confirmation_volume", "csd": "setup_csd", "breakout": "setup_breakout", "retest": "setup_retest",
+    }
+    component_data = {
+        name: _group([trade for trade in trades if getattr(trade, field) is not None], lambda trade, field=field: "TRUE" if getattr(trade, field) else "FALSE")
+        for name, field in fields.items()
+    }
+    htf_trades = [trade for trade in trades if trade.htf_one_hour is not None and trade.htf_four_hour is not None]
     return {
         "band_definition": "floor(score_total), restricted to 5..10",
         "by_score": by_score,
         "by_direction": _group(trades, lambda trade: trade.direction),
         "by_symbol": _group(trades, lambda trade: trade.symbol or "UNKNOWN"),
         "by_regime": _group(trades, lambda trade: trade.regime or "UNAVAILABLE"),
-        "by_htf_agreement": {"status": "UNAVAILABLE_NOT_PERSISTED"},
-        "by_confirmation_component": {"status": "UNAVAILABLE_NOT_PERSISTED"},
+        "by_htf_agreement": _group(htf_trades, lambda trade: "AGREES" if trade.htf_one_hour and trade.htf_four_hour else "NOT_FULLY_AGREE")
+        if htf_trades else {"status": "UNAVAILABLE_NOT_PERSISTED"},
+        "by_confirmation_component": component_data if any(component_data.values()) else {"status": "UNAVAILABLE_NOT_PERSISTED"},
     }
 
 
@@ -113,10 +123,14 @@ def _drawdown_and_streak(values: Sequence[Decimal]) -> tuple[Decimal, int]:
 
 
 def _percentile(values: Sequence[Decimal], percentile: Decimal) -> Decimal | None:
+    """Nearest-rank percentile: rank=ceil(p/100*n), 1-indexed."""
     if not values:
         return None
+    if not Decimal(0) <= percentile <= Decimal(100):
+        raise ValueError("percentile must be between 0 and 100")
     ordered = sorted(values)
-    index = max(0, min(len(ordered) - 1, int((Decimal(len(ordered) - 1) * percentile / Decimal(100)).to_integral_value())))
+    rank = (percentile * Decimal(len(ordered)) / Decimal(100)).to_integral_value(rounding=ROUND_CEILING)
+    index = max(0, min(len(ordered) - 1, int(rank) - 1))
     return ordered[index]
 
 
@@ -148,7 +162,8 @@ def monte_carlo_ordering(trades: Sequence[TradeAudit], *, iterations: int = 1000
         "p99_max_drawdown_r": _percentile(drawdowns, Decimal(99)),
         "median_max_losing_streak": _median(streaks),
         "p95_max_losing_streak": _percentile(streaks, Decimal(95)),
-        "probability_ending_negative": Decimal(sum(value < 0 for value in totals)) / Decimal(iterations),
+        "total_r_is_invariant": True,
+        "invariant_total_r": totals[0],
         "probability_drawdown_exceeds_threshold": Decimal(sum(value > drawdown_threshold_r for value in drawdowns)) / Decimal(iterations),
     }
 
@@ -184,34 +199,70 @@ def cost_stress_report(trades: Sequence[TradeAudit], settings: Settings) -> dict
     for name, cost_settings in _stress_settings(settings.cost).items():
         model = CostModel(cost_settings)
         stressed: list[TradeAudit] = []
+        missing_execution_data = 0
         for trade in trades:
-            if None in (trade.entry_price, trade.stop_loss, trade.exit_time, trade.exit_reason, trade.gross_r):
+            if None in (trade.entry_price, trade.stop_loss, trade.entry_time, trade.exit_time,
+                        trade.exit_price, trade.exit_reason, trade.gross_r):
+                missing_execution_data += 1
                 continue
             breakdown = model.breakdown(direction=CSDDirection(trade.direction), entry=trade.entry_price,
-                                        stop_loss=trade.stop_loss, exit_price=trade.take_profit_1 or trade.entry_price,
-                                        is_stop_exit=trade.exit_reason == "SL", opened_at=trade.signal_time,
+                                        stop_loss=trade.stop_loss, exit_price=trade.exit_price,
+                                        is_stop_exit=trade.exit_reason == "SL", opened_at=trade.entry_time,
                                         closed_at=trade.exit_time)
             stressed.append(replace(trade, costs_r=breakdown.total_r, net_r=trade.gross_r - breakdown.total_r))
-        report[name] = {**_summary(stressed), "assumptions": asdict(cost_settings)}
+        status = "INCOMPLETE_DATA" if missing_execution_data else _summary(stressed)["status"]
+        report[name] = {**_summary(stressed), "status": status, "missing_execution_records": missing_execution_data,
+                        "assumptions": asdict(cost_settings)}
     return report
 
 
 def lifecycle_funnel(events: Iterable[LifecycleEvent]) -> dict[str, Any]:
+    """Build a funnel only from valid, entity-linked event sequences."""
     event_list = tuple(events)
-    counts = {stage: sum(event.stage == stage for event in event_list) for stage in LIFECYCLE_STAGES}
+    sequential = ("CSD_DETECTED", "BREAKOUT_CONFIRMED", "WAITING_FOR_RETEST", "RETEST_DETECTED",
+                  "CONFIRMATION_PENDING", "SIGNAL_CONFIRMED")
+    terminals = tuple(stage for stage in LIFECYCLE_STAGES if stage not in sequential)
+    if not event_list or any(not event.entity_id or event.stage not in LIFECYCLE_STAGES for event in event_list):
+        return {"status": "UNAVAILABLE_INSUFFICIENT_LIFECYCLE_LINKAGE", "source": "persisted lifecycle events only",
+                "stages": {}, "terminal_outcomes": {}, "failure_reasons": {}}
+    by_entity: dict[str, list[LifecycleEvent]] = {}
+    for event in event_list:
+        by_entity.setdefault(event.entity_id, []).append(event)
+    reached = {stage: set() for stage in sequential}
+    invalid_linkage = False
+    terminal_outcomes = {stage: set() for stage in terminals}
+    for entity, entity_events in by_entity.items():
+        seen = {event.stage for event in entity_events}
+        for stage in terminals:
+            if stage in seen:
+                terminal_outcomes[stage].add(entity)
+        previous_seen = True
+        for stage in sequential:
+            if stage in seen:
+                if not previous_seen:
+                    invalid_linkage = True
+                else:
+                    reached[stage].add(entity)
+            else:
+                previous_seen = False
+    if invalid_linkage:
+        return {"status": "UNAVAILABLE_INSUFFICIENT_LIFECYCLE_LINKAGE", "source": "persisted lifecycle events only",
+                "stages": {}, "terminal_outcomes": {stage: len(items) for stage, items in terminal_outcomes.items()},
+                "failure_reasons": {}}
     stages: dict[str, dict[str, Any]] = {}
     previous: int | None = None
-    for stage in LIFECYCLE_STAGES:
-        count = counts[stage]
+    for stage in sequential:
+        count = len(reached[stage])
         stages[stage] = {
             "status": "OK" if count else "NO_DATA",
             "count": count,
             "conversion_from_previous": None if previous is None or previous == 0 else Decimal(count) / Decimal(previous),
         }
         previous = count
-    failures = {stage: counts[stage] for stage in ("CANCELLED", "INVALIDATED", "BREAKOUT_FAILED", "RETEST_FAILED")}
-    return {"source": "persisted lifecycle events only", "stages": stages,
-            "failure_percentage": Decimal(sum(failures.values())) / Decimal(len(event_list)) if event_list else None,
+    failures = {stage: len(terminal_outcomes[stage]) for stage in ("CANCELLED", "INVALIDATED", "BREAKOUT_FAILED", "RETEST_FAILED")}
+    return {"status": "OK", "source": "persisted lifecycle events only", "stages": stages,
+            "terminal_outcomes": {stage: len(items) for stage, items in terminal_outcomes.items()},
+            "failure_percentage": Decimal(sum(failures.values())) / Decimal(len(by_entity)) if by_entity else None,
             "failure_reasons": {reason: sum(event.failure_reason == reason for event in event_list)
                                 for reason in sorted({event.failure_reason for event in event_list if event.failure_reason})}}
 
@@ -227,17 +278,23 @@ def _jsonable(value: Any) -> Any:
 
 
 def reproducibility_metadata(settings: Settings, candles_by_symbol: dict[str, Sequence[Any]], *, random_seed: int,
-                            strategy_version: str = "V1_FROZEN", methodology_id: str = "signalbot-research-v1") -> dict[str, Any]:
+                            strategy_version: str = "V1_FROZEN", methodology_id: str = "signalbot-research-v1",
+                            git_commit: str | None = None) -> dict[str, Any]:
     snapshot = _jsonable(asdict(settings))
     configuration_hash = sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     dates = [candle.open_time for candles in candles_by_symbol.values() for candle in candles]
-    try:
-        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL).strip()
-    except (OSError, subprocess.CalledProcessError):
-        commit = "UNAVAILABLE"
+    if git_commit is None:
+        try:
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL).strip()
+        except (OSError, subprocess.CalledProcessError):
+            commit = "UNAVAILABLE"
+    else:
+        commit = git_commit
     identity = {"configuration_hash": configuration_hash, "symbols": sorted(candles_by_symbol),
                 "start": min(dates).isoformat() if dates else None, "end": max(dates).isoformat() if dates else None,
-                "random_seed": random_seed, "strategy_version": strategy_version, "methodology_id": methodology_id}
+                "timeframes": list(settings.timeframes), "random_seed": random_seed, "strategy_version": strategy_version,
+                "methodology_id": methodology_id, "git_commit": commit, "cost_assumptions": _jsonable(asdict(settings.cost)),
+                "exit_policy": _jsonable(asdict(settings.exit_policy))}
     research_run_id = sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
     return {"research_run_id": research_run_id, "git_commit": commit, "strategy_version": strategy_version,
             "methodology_id": methodology_id, "configuration_hash": configuration_hash,

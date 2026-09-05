@@ -58,11 +58,13 @@ async def test_runner_processes_candles_sequentially_and_does_not_use_signal_can
         strategy = _OneSignalStrategy(assessment, analysis, callback); created.append(strategy); return strategy
     candles = [signal, _candle(make_candle, 1, 100, 101, 101), _candle(make_candle, 2, 100.2, 102, 102), _candle(make_candle, 3, 100.2, 103, 103)]
     run = await HistoricalBacktestRunner(load_settings("tests/fixtures/settings.yaml"), BacktestRepository(database), factory).run(candles)
-    row = database.connection.execute("SELECT gross_r,costs_r,net_r,exit_reason,resolution_method FROM backtest_trades WHERE run_id=?", (run.run_id,)).fetchone()
+    row = database.connection.execute("SELECT gross_r,costs_r,net_r,exit_reason,resolution_method,entry_time,exit_price,htf_one_hour,htf_four_hour,confirmation_ema,setup_csd FROM backtest_trades WHERE run_id=?", (run.run_id,)).fetchone()
     assert run.status is BacktestStatus.DIAGNOSTIC
     assert row is not None
     assert tuple(Decimal(value) for value in row[:3]) == (Decimal("1.75"), Decimal("0.14"), Decimal("1.61"))
-    assert row[3:] == ("TP3_LAST_LEG", "TP_ONLY")
+    assert row[3:5] == ("TP3_LAST_LEG", "TP_ONLY")
+    assert row[5] is not None and Decimal(row[6]) == Decimal("103")
+    assert row[7:] == (1, 1, 1, 1)
     assert created[0].emitted
 
 

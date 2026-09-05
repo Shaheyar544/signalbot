@@ -82,7 +82,12 @@ class Database:
         if "score_classification" not in columns:
             self.connection.execute("ALTER TABLE backtest_trades ADD COLUMN score_classification TEXT NOT NULL DEFAULT 'NO_TRADE'")
         for name, definition in (("bars_in_trade", "INTEGER"), ("mfe_r", "TEXT"), ("mae_r", "TEXT"),
-                                 ("trade_symbol", "TEXT"), ("regime", "TEXT"), ("session", "TEXT")):
+                                 ("trade_symbol", "TEXT"), ("regime", "TEXT"), ("session", "TEXT"),
+                                 ("entry_time", "TEXT"), ("exit_price", "TEXT"),
+                                 ("htf_one_hour", "INTEGER"), ("htf_four_hour", "INTEGER"),
+                                 ("confirmation_ema", "INTEGER"), ("confirmation_rsi", "INTEGER"),
+                                 ("confirmation_macd", "INTEGER"), ("confirmation_volume", "INTEGER"),
+                                 ("setup_csd", "INTEGER"), ("setup_breakout", "INTEGER"), ("setup_retest", "INTEGER")):
             if name not in columns:
                 self.connection.execute(f"ALTER TABLE backtest_trades ADD COLUMN {name} {definition}")
         if {legacy_setup_column, legacy_confluence_column}.issubset(columns):

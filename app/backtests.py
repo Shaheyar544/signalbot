@@ -24,6 +24,19 @@ class TradeAudit:
     symbol: str | None = None
     regime: str | None = None
     session: str | None = None
+    # Added after the original audit schema: old persisted rows remain readable
+    # but are intentionally INCOMPLETE_DATA for execution-sensitive research.
+    entry_time: datetime | None = None
+    exit_price: Decimal | None = None
+    htf_one_hour: bool | None = None
+    htf_four_hour: bool | None = None
+    confirmation_ema: bool | None = None
+    confirmation_rsi: bool | None = None
+    confirmation_macd: bool | None = None
+    confirmation_volume: bool | None = None
+    setup_csd: bool | None = None
+    setup_breakout: bool | None = None
+    setup_retest: bool | None = None
 
     @property
     def total_cost_r(self) -> Decimal | None:

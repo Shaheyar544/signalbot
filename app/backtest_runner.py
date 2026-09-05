@@ -122,4 +122,8 @@ class HistoricalBacktestRunner:
             trade.exit_reason, gross, costs.total_r, gross - costs.total_r, trade.resolution_method,
             trade.ambiguous_intrabar_events > 0,
             trade.bars_since_entry, trade.mfe_r, trade.mae_r, record.analysis.symbol, record.analysis.regime, None,
+            trade.entered_at, trade.exit_price, record.assessment.confirmation.one_hour,
+            record.assessment.confirmation.four_hour, record.assessment.confirmation.ema,
+            record.assessment.confirmation.rsi, record.assessment.confirmation.macd,
+            record.assessment.confirmation.volume, True, True, True,
         ))

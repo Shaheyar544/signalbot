@@ -10,6 +10,7 @@ from typing import Any, Sequence
 
 from app.backtest.gate import GoLiveGateSettings, evaluate_gate
 from app.backtest.metrics import calculate_metrics
+from app.backtest.data_integrity import check_integrity
 from app.backtest.phase9 import Phase9ValidationOrchestrator, build_symbol_validation
 from app.backtest.research import (
     LifecycleEvent, cost_stress_report, leave_one_symbol_out, lifecycle_funnel,
@@ -63,11 +64,20 @@ class UnifiedResearchOrchestrator:
         }
         gate = evaluate_gate(gate_input, GoLiveGateSettings(**(self.settings.go_live_gate or {})))
         lifecycle = lifecycle_funnel(lifecycle_events)
+        integrity = self._data_integrity(candles_by_symbol)
+        methodology = {**metadata, "analysis_scopes": {
+            "strategy_performance": "canonical strategy, exit, and cost audit metrics",
+            "sequence_risk_monte_carlo": "trade-order permutations only; not evidence of strategy edge",
+            "sensitivity": "owner-supplied observations; no parameter selection",
+            "oos_validation": "calendar walk-forward chronological output",
+            "lifecycle": "persisted entity-linked events only",
+            "cost_stress": "existing CostModel repricing with explicit scenarios",
+        }}
         return {
             "schema_version": "research-report-v1",
             "research_run_id": metadata["research_run_id"],
             "status": "READY_FOR_HUMAN_REVIEW" if phase9["status"] == "READY_FOR_HUMAN_REVIEW" else "INCOMPLETE_VALIDATION",
-            "methodology": metadata,
+            "methodology": methodology,
             "baseline": {symbol: asdict(result["baseline"]) if result["baseline"] else {"status": "NO_ELIGIBLE_ENTRIES"}
                          for symbol, result in per_symbol.items()},
             "score_analysis": score_analytics(audits),
@@ -77,10 +87,31 @@ class UnifiedResearchOrchestrator:
             "monte_carlo": monte_carlo_ordering(audits, iterations=self.monte_carlo_iterations, random_seed=self.random_seed),
             "leave_one_symbol_out": leave_one_symbol_out(audits, self.settings.historical.symbols),
             "cost_stress": cost_stress_report(audits, self.settings),
-            "lifecycle_funnel": lifecycle if lifecycle_events else {**lifecycle, "status": "UNAVAILABLE_NO_PERSISTED_LIFECYCLE_EVENTS"},
+            "lifecycle_funnel": lifecycle,
+            "data_integrity": integrity,
             "go_live_gate": {"result": "PASS" if gate.passed else "FAIL", "failures": list(gate.failures),
                              "observation_mode": gate.observation_mode, "input": gate_input},
         }
+
+    def _data_integrity(self, candles_by_symbol: dict[str, Sequence[Candle]]) -> dict[str, Any]:
+        expected_symbols = tuple(self.settings.historical.symbols)
+        missing_symbols = [symbol for symbol in expected_symbols if symbol not in candles_by_symbol]
+        reports: dict[str, Any] = {}
+        incomplete = bool(missing_symbols)
+        for symbol in expected_symbols:
+            for timeframe in self.settings.historical.timeframes:
+                candles = [candle for candle in candles_by_symbol.get(symbol, ()) if candle.timeframe == timeframe]
+                check = check_integrity(symbol, timeframe, candles)
+                status = "OK" if check.is_clean else "INCOMPLETE_DATA"
+                incomplete = incomplete or status != "OK"
+                reports[f"{symbol}:{timeframe}"] = {
+                    "status": status, "candle_count": check.candle_count,
+                    "range_start": check.range_start.isoformat() if check.range_start else None,
+                    "range_end": check.range_end.isoformat() if check.range_end else None,
+                    "gap_count": len(check.gaps), "missing_candles": sum(gap.missing_candles for gap in check.gaps),
+                    "duplicate_open_times": check.duplicate_open_times, "ohlc_violations": check.ohlc_violations,
+                }
+        return {"status": "INCOMPLETE_DATA" if incomplete else "OK", "missing_symbols": missing_symbols, "series": reports}
 
     async def _htf_experiment(self, candles_by_symbol: dict[str, Sequence[Candle]]) -> dict[str, Any]:
         variants = {

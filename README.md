@@ -96,3 +96,12 @@ leave-one-symbol-out results, cost stresses, lifecycle-data availability,
 reproducibility metadata, and the conservative go-live gate result. It never
 places orders or changes production strategy settings. A non-zero exit status
 means the report is incomplete, not that the strategy has failed or succeeded.
+
+Research semantics are explicit: Monte Carlo shuffles completed trade order to
+measure sequence drawdown/streak risk only—total R is invariant and it is not
+entry-edge evidence. Percentiles use the deterministic nearest-rank convention.
+Cost stress requires recorded entry time, exit time, and actual exit price;
+legacy audits missing those fields are reported as `INCOMPLETE_DATA`. Lifecycle
+conversion requires persisted events linked to the same setup/signal entity;
+unlinked or absent lifecycle records are reported as unavailable rather than
+estimated.

@@ -10,6 +10,7 @@ from app.backtest.research import (
     monte_carlo_ordering,
     reproducibility_metadata,
     score_analytics,
+    _percentile,
 )
 from app.backtest.research_orchestrator import UnifiedResearchOrchestrator, write_research_outputs
 from app.backtests import TradeAudit
@@ -40,6 +41,15 @@ def test_monte_carlo_ordering_is_seed_deterministic_and_preserves_outcomes():
     assert first == again
     assert first["median_total_r"] == Decimal("-1")
     assert first["iterations"] == 100
+    assert first["total_r_is_invariant"] is True
+    assert "probability_ending_negative" not in first
+
+
+def test_monte_carlo_ordering_changes_sequence_risk_but_not_total_r():
+    values = [Decimal("1"), Decimal("-2"), Decimal("1"), Decimal("-1")]
+    assert sum(values) == sum(reversed(values))
+    report = monte_carlo_ordering([trade(index, str(value)) for index, value in enumerate(values)], iterations=30, random_seed=3)
+    assert report["p95_max_drawdown_r"] >= Decimal("2")
 
 
 def test_leave_one_symbol_out_includes_combined_and_each_configured_symbol():
@@ -53,7 +63,8 @@ def test_leave_one_symbol_out_includes_combined_and_each_configured_symbol():
 
 def test_cost_stress_is_explicit_and_never_mutates_base_settings():
     settings = load_settings("tests/fixtures/settings.yaml")
-    audit = trade(0, "1")
+    stamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    audit = replace(trade(0, "1"), entry_time=stamp, exit_time=stamp + timedelta(hours=1), exit_price=Decimal("101"))
     report = cost_stress_report([audit], settings)
 
     assert set(report) == {"BASE", "HIGH_SLIPPAGE", "HIGH_FEES", "ADVERSE_FUNDING", "SEVERE_COST"}
@@ -61,23 +72,94 @@ def test_cost_stress_is_explicit_and_never_mutates_base_settings():
     assert settings.cost.slippage_percent == Decimal("0.02")
 
 
-def test_lifecycle_funnel_uses_events_only_and_never_infers_absent_stages():
-    events = [LifecycleEvent("CSD_DETECTED", "a"), LifecycleEvent("BREAKOUT_CONFIRMED", "a"), LifecycleEvent("CANCELLED", "a", "FAILED_RETEST")]
+def test_cost_stress_requires_actual_fill_timestamps_and_exit_price_and_uses_them():
+    settings = load_settings("tests/fixtures/settings.yaml")
+    opened = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    tp2 = replace(trade(0, "2"), entry_time=opened, exit_time=opened + timedelta(hours=9),
+                  exit_price=Decimal("102"), take_profit_1=Decimal("101"), exit_reason="TP2")
+    stop = replace(trade(1, "-1"), entry_time=opened, exit_time=opened + timedelta(hours=9),
+                   exit_price=Decimal("99"), exit_reason="SL")
+    time_stop = replace(trade(2, "0.3"), entry_time=opened, exit_time=opened + timedelta(hours=9),
+                        exit_price=Decimal("100.3"), exit_reason="TIME_STOP")
+    report = cost_stress_report([tp2, stop, time_stop], settings)
+
+    assert report["BASE"]["status"] == "OK"
+    assert report["BASE"]["total_cost_r"] > Decimal("0")
+
+
+def test_cost_stress_passes_the_recorded_exit_price_to_cost_model(monkeypatch):
+    from app.backtest.costs import CostBreakdown, CostModel
+    captured = []
+    original = CostModel.breakdown
+    def capture(self, **kwargs):
+        captured.append((kwargs["exit_price"], kwargs["is_stop_exit"], kwargs["opened_at"], kwargs["closed_at"]))
+        return original(self, **kwargs)
+    monkeypatch.setattr(CostModel, "breakdown", capture)
+    opened = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    records = [
+        replace(trade(0, "2"), entry_time=opened, exit_time=opened + timedelta(hours=1), exit_price=Decimal("102"), exit_reason="TP2"),
+        replace(trade(1, "-1"), entry_time=opened, exit_time=opened + timedelta(hours=2), exit_price=Decimal("99"), exit_reason="SL"),
+        replace(trade(2, "0"), entry_time=opened, exit_time=opened + timedelta(hours=3), exit_price=Decimal("100.3"), exit_reason="TIME_STOP"),
+    ]
+    cost_stress_report(records, load_settings("tests/fixtures/settings.yaml"))
+
+    # Five scenarios each process the original actual recorded exits.
+    assert (Decimal("102"), False, opened, opened + timedelta(hours=1)) in captured
+    assert (Decimal("99"), True, opened, opened + timedelta(hours=2)) in captured
+    assert (Decimal("100.3"), False, opened, opened + timedelta(hours=3)) in captured
+
+
+def test_cost_stress_marks_old_audits_without_actual_execution_data_incomplete():
+    report = cost_stress_report([trade(0, "1")], load_settings("tests/fixtures/settings.yaml"))
+    assert report["BASE"]["status"] == "INCOMPLETE_DATA"
+
+
+def test_lifecycle_funnel_uses_entity_aware_sequential_conversion_and_terminal_outcomes():
+    events = [LifecycleEvent("CSD_DETECTED", "a"), LifecycleEvent("BREAKOUT_CONFIRMED", "a"),
+              LifecycleEvent("WAITING_FOR_RETEST", "a"), LifecycleEvent("RETEST_DETECTED", "a"),
+              LifecycleEvent("CONFIRMATION_PENDING", "a"), LifecycleEvent("SIGNAL_CONFIRMED", "a"), LifecycleEvent("TP1", "a"),
+              LifecycleEvent("CSD_DETECTED", "b"), LifecycleEvent("CANCELLED", "b", "FAILED_RETEST")]
     report = lifecycle_funnel(events)
 
-    assert report["stages"]["CSD_DETECTED"]["count"] == 1
-    assert report["stages"]["SIGNAL_CONFIRMED"]["status"] == "NO_DATA"
+    assert report["status"] == "OK"
+    assert report["stages"]["CSD_DETECTED"]["count"] == 2
+    assert report["stages"]["SIGNAL_CONFIRMED"]["count"] == 1
+    assert report["terminal_outcomes"]["CANCELLED"] == 1
     assert report["failure_reasons"]["FAILED_RETEST"] == 1
+
+
+def test_lifecycle_funnel_refuses_unlinked_stage_events():
+    report = lifecycle_funnel([LifecycleEvent("RETEST_DETECTED", "orphan")])
+    assert report["status"] == "UNAVAILABLE_INSUFFICIENT_LIFECYCLE_LINKAGE"
+
+
+def test_score_analytics_uses_persisted_htf_and_component_evidence_only():
+    enriched = replace(trade(0, "1"), htf_one_hour=True, htf_four_hour=False,
+                       confirmation_ema=True, confirmation_rsi=False, confirmation_macd=True,
+                       confirmation_volume=False, setup_csd=True, setup_breakout=True, setup_retest=True)
+    report = score_analytics([enriched])
+    assert report["by_htf_agreement"]["NOT_FULLY_AGREE"]["trade_count"] == 1
+    assert report["by_confirmation_component"]["ema"]["TRUE"]["trade_count"] == 1
 
 
 def test_reproducibility_metadata_is_stable_for_same_inputs(make_candle):
     settings = load_settings("tests/fixtures/settings.yaml")
     candles = [make_candle(symbol="ETHUSDT", offset=0), make_candle(symbol="ETHUSDT", offset=1)]
-    first = reproducibility_metadata(settings, {"ETHUSDT": candles}, random_seed=7)
-    again = reproducibility_metadata(settings, {"ETHUSDT": candles}, random_seed=7)
+    first = reproducibility_metadata(settings, {"ETHUSDT": candles}, random_seed=7, git_commit="a")
+    again = reproducibility_metadata(settings, {"ETHUSDT": candles}, random_seed=7, git_commit="a")
 
     assert first["research_run_id"] == again["research_run_id"]
     assert first["configuration_hash"] == again["configuration_hash"]
+    assert reproducibility_metadata(settings, {"ETHUSDT": candles}, random_seed=7, git_commit="b")["research_run_id"] != first["research_run_id"]
+    assert reproducibility_metadata(settings, {"ETHUSDT": candles}, random_seed=8, git_commit="a")["research_run_id"] != first["research_run_id"]
+    assert reproducibility_metadata(replace(settings, historical_candle_limit=99), {"ETHUSDT": candles}, random_seed=7, git_commit="a")["research_run_id"] != first["research_run_id"]
+
+
+def test_percentile_uses_nearest_rank_convention():
+    assert _percentile([Decimal("5")], Decimal(95)) == Decimal("5")
+    assert _percentile([Decimal("1"), Decimal("2")], Decimal(90)) == Decimal("2")
+    assert _percentile([Decimal("1"), Decimal("2"), Decimal("3")], Decimal(50)) == Decimal("2")
+    assert _percentile([Decimal(index) for index in range(1, 101)], Decimal(90)) == Decimal("90")
 
 
 async def test_unified_research_pipeline_is_explicitly_incomplete_without_data(tmp_path):
@@ -88,5 +170,6 @@ async def test_unified_research_pipeline_is_explicitly_incomplete_without_data(t
 
     assert report["schema_version"] == "research-report-v1"
     assert report["go_live_gate"]["result"] == "FAIL"
-    assert report["lifecycle_funnel"]["status"] == "UNAVAILABLE_NO_PERSISTED_LIFECYCLE_EVENTS"
+    assert report["lifecycle_funnel"]["status"] == "UNAVAILABLE_INSUFFICIENT_LIFECYCLE_LINKAGE"
+    assert report["data_integrity"]["status"] == "INCOMPLETE_DATA"
     assert json_path.exists() and csv_path.exists()
