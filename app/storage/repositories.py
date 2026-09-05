@@ -130,11 +130,12 @@ class BacktestRepository:
     def save_trade(self, trade: TradeAudit) -> None:
         connection = self.database.connection
         if connection is None: raise RuntimeError("Database is not open")
-        values = (trade.trade_id, trade.run_id, trade.signal_time.isoformat(), trade.direction, *(str(x) if x is not None else None for x in (trade.entry_price, trade.stop_loss, trade.take_profit_1, trade.take_profit_2, trade.take_profit_3)), str(trade.score_total), str(trade.score_classification), trade.exit_time.isoformat() if trade.exit_time else None, trade.exit_reason, *(str(x) if x is not None else None for x in (trade.gross_r, trade.costs_r, trade.net_r)), trade.resolution_method, int(trade.ambiguous_intrabar))
+        values = (trade.trade_id, trade.run_id, trade.signal_time.isoformat(), trade.direction, *(str(x) if x is not None else None for x in (trade.entry_price, trade.stop_loss, trade.take_profit_1, trade.take_profit_2, trade.take_profit_3)), str(trade.score_total), str(trade.score_classification), trade.exit_time.isoformat() if trade.exit_time else None, trade.exit_reason, *(str(x) if x is not None else None for x in (trade.gross_r, trade.costs_r, trade.net_r)), trade.resolution_method, int(trade.ambiguous_intrabar), trade.bars_in_trade, str(trade.mfe_r) if trade.mfe_r is not None else None, str(trade.mae_r) if trade.mae_r is not None else None, trade.symbol, trade.regime, trade.session)
         connection.execute("""INSERT INTO backtest_trades
             (trade_id,run_id,signal_time,direction,entry_price,stop_loss,take_profit_1,take_profit_2,take_profit_3,
-             score_total,score_classification,exit_time,exit_reason,gross_r,costs_r,net_r,resolution_method,ambiguous_intrabar)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", values)
+             score_total,score_classification,exit_time,exit_reason,gross_r,costs_r,net_r,resolution_method,ambiguous_intrabar,
+             bars_in_trade,mfe_r,mae_r,trade_symbol,regime,session)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", values)
         connection.commit()
 
     def list_runs(self) -> list[BacktestRun]:
@@ -149,6 +150,6 @@ class BacktestRepository:
     def list_trades(self, run_id: str) -> list[TradeAudit]:
         connection = self.database.connection
         if connection is None: raise RuntimeError("Database is not open")
-        rows = connection.execute("""SELECT trade_id,run_id,signal_time,direction,entry_price,stop_loss,take_profit_1,take_profit_2,take_profit_3,score_total,score_classification,exit_time,exit_reason,gross_r,costs_r,net_r,resolution_method,ambiguous_intrabar FROM backtest_trades WHERE run_id=? ORDER BY signal_time""", (run_id,)).fetchall()
+        rows = connection.execute("""SELECT trade_id,run_id,signal_time,direction,entry_price,stop_loss,take_profit_1,take_profit_2,take_profit_3,score_total,score_classification,exit_time,exit_reason,gross_r,costs_r,net_r,resolution_method,ambiguous_intrabar,bars_in_trade,mfe_r,mae_r,trade_symbol,regime,session FROM backtest_trades WHERE run_id=? ORDER BY signal_time""", (run_id,)).fetchall()
         def decimal(value): return Decimal(value) if value is not None else None
-        return [TradeAudit(row[0], row[1], datetime.fromisoformat(row[2]), row[3], decimal(row[4]), decimal(row[5]), decimal(row[6]), decimal(row[7]), decimal(row[8]), Decimal(row[9]), row[10], datetime.fromisoformat(row[11]) if row[11] else None, row[12], decimal(row[13]), decimal(row[14]), decimal(row[15]), row[16], bool(row[17])) for row in rows]
+        return [TradeAudit(row[0], row[1], datetime.fromisoformat(row[2]), row[3], decimal(row[4]), decimal(row[5]), decimal(row[6]), decimal(row[7]), decimal(row[8]), Decimal(row[9]), row[10], datetime.fromisoformat(row[11]) if row[11] else None, row[12], decimal(row[13]), decimal(row[14]), decimal(row[15]), row[16], bool(row[17]), row[18], decimal(row[19]), decimal(row[20]), row[21], row[22], row[23]) for row in rows]

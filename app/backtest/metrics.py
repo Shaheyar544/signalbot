@@ -1,7 +1,7 @@
 """Cost-aware, deterministic performance statistics for trade audits."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from math import sqrt
 from typing import Sequence
@@ -22,6 +22,7 @@ class PerformanceMetrics:
     gross_r: Decimal
     total_cost_r: Decimal
     profit_factor: Decimal | None
+    profit_factor_status: str
     max_drawdown_r: Decimal
     longest_losing_streak: int
     ambiguous_intrabar_count: int
@@ -31,6 +32,9 @@ class PerformanceMetrics:
     by_month: dict[str, dict[str, Decimal | int]]
     mfe_distribution: tuple[Decimal, ...] = ()
     mae_distribution: tuple[Decimal, ...] = ()
+    by_symbol: dict[str, dict[str, Decimal | int]] = field(default_factory=dict)
+    by_regime: dict[str, dict[str, Decimal | int]] = field(default_factory=dict)
+    by_session: dict[str, dict[str, Decimal | int]] = field(default_factory=dict)
 
 
 def _wilson(wins: int, total: int) -> tuple[Decimal, Decimal]:
@@ -51,8 +55,14 @@ def _bucket_by(trades: Sequence[TradeAudit], key):
     result = {}
     for name, items in groups.items():
         values = [item.net_r for item in items if item.net_r is not None]
-        result[name] = {"trades": len(items), "total_r": sum(values, Decimal(0)),
-                        "expectancy_r": sum(values, Decimal(0)) / len(values) if values else Decimal(0)}
+        wins = sum(value > 0 for value in values)
+        positive = sum((value for value in values if value > 0), Decimal(0))
+        negative = abs(sum((value for value in values if value < 0), Decimal(0)))
+        result[name] = {"trades": len(items), "wins": wins, "losses": len(values) - wins,
+                        "win_rate": Decimal(wins) / len(values) if values else Decimal(0),
+                        "total_r": sum(values, Decimal(0)),
+                        "expectancy_r": sum(values, Decimal(0)) / len(values) if values else Decimal(0),
+                        "profit_factor": positive / negative if negative else None}
     return result
 
 
@@ -74,12 +84,21 @@ def calculate_metrics(trades: Sequence[TradeAudit]) -> PerformanceMetrics:
             streak = 0
     positive = sum((value for value in net if value > 0), Decimal(0))
     negative = abs(sum((value for value in net if value < 0), Decimal(0)))
+    average_bars = [trade.bars_in_trade for trade in trades if trade.bars_in_trade is not None]
+    mfe = tuple(trade.mfe_r for trade in trades if trade.mfe_r is not None)
+    mae = tuple(trade.mae_r for trade in trades if trade.mae_r is not None)
+    by_confidence = _bucket_by(trades, lambda item: item.score_classification)
+    by_direction = _bucket_by(trades, lambda item: item.direction)
+    by_month = _bucket_by(trades, lambda item: item.signal_time.strftime("%Y-%m"))
+    by_symbol = _bucket_by(trades, lambda item: item.symbol or "UNKNOWN")
+    by_regime = _bucket_by(trades, lambda item: item.regime or "UNKNOWN")
+    by_session = _bucket_by(trades, lambda item: item.session or "UNKNOWN")
     return PerformanceMetrics(
         len(net), wins, losses, Decimal(wins) / len(net) if net else Decimal(0), low, high,
         sum(net, Decimal(0)) / len(net) if net else Decimal(0), sum(net, Decimal(0)),
         sum(gross, Decimal(0)), sum(costs, Decimal(0)), positive / negative if negative else None,
-        abs(drawdown), longest, sum(trade.ambiguous_intrabar for trade in trades), None,
-        _bucket_by(trades, lambda item: item.score_classification),
-        _bucket_by(trades, lambda item: item.direction),
-        _bucket_by(trades, lambda item: item.signal_time.strftime("%Y-%m")),
+        "INSUFFICIENT_SAMPLE" if not net else ("DEFINED" if negative else "UNDEFINED_NO_LOSSES"),
+        abs(drawdown), longest, sum(trade.ambiguous_intrabar for trade in trades),
+        sum(average_bars, 0) / Decimal(len(average_bars)) if average_bars else None,
+        by_confidence, by_direction, by_month, mfe, mae, by_symbol, by_regime, by_session,
     )

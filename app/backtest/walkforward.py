@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
+import calendar
 from typing import Sequence
 
 from app.events.models import Candle
@@ -20,13 +21,20 @@ def rolling_windows(start: datetime, end: datetime, *, in_sample_months: int = 6
                     out_sample_months: int = 2, step_months: int = 2) -> tuple[WalkForwardWindow, ...]:
     windows = []
     cursor = start
-    month = timedelta(days=30)
-    while cursor + month * (in_sample_months + out_sample_months) <= end:
-        in_end = cursor + month * in_sample_months
-        out_end = in_end + month * out_sample_months
+    while _add_months(cursor, in_sample_months + out_sample_months) <= end:
+        in_end = _add_months(cursor, in_sample_months)
+        out_end = _add_months(in_end, out_sample_months)
         windows.append(WalkForwardWindow(cursor, in_end, in_end, out_end))
-        cursor += month * step_months
+        cursor = _add_months(cursor, step_months)
     return tuple(windows)
+
+
+def _add_months(value: datetime, months: int) -> datetime:
+    month_index = value.year * 12 + value.month - 1 + months
+    year, month = divmod(month_index, 12)
+    month += 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return value.replace(year=year, month=month, day=day)
 
 
 def split_candles(candles: Sequence[Candle], window: WalkForwardWindow):

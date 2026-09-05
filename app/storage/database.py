@@ -73,6 +73,10 @@ class Database:
             self.connection.execute("ALTER TABLE backtest_trades ADD COLUMN score_total TEXT NOT NULL DEFAULT '0'")
         if "score_classification" not in columns:
             self.connection.execute("ALTER TABLE backtest_trades ADD COLUMN score_classification TEXT NOT NULL DEFAULT 'NO_TRADE'")
+        for name, definition in (("bars_in_trade", "INTEGER"), ("mfe_r", "TEXT"), ("mae_r", "TEXT"),
+                                 ("trade_symbol", "TEXT"), ("regime", "TEXT"), ("session", "TEXT")):
+            if name not in columns:
+                self.connection.execute(f"ALTER TABLE backtest_trades ADD COLUMN {name} {definition}")
         if {legacy_setup_column, legacy_confluence_column}.issubset(columns):
             self.connection.execute(
                 f"UPDATE backtest_trades SET score_total=CAST({legacy_confluence_column} AS TEXT), "

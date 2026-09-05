@@ -45,6 +45,8 @@ class SimulatedTrade:
     resolution_method: str | None = None
     ambiguous_intrabar_events: int = 0
     remaining_size_percent: Decimal = Decimal("100")
+    mfe_r: Decimal = Decimal("0")
+    mae_r: Decimal = Decimal("0")
 
 
 class ExitPolicyEngine:
@@ -72,6 +74,14 @@ class ExitPolicyEngine:
             trade.state = TradeState.OPEN
 
         trade.bars_since_entry += 1
+        risk = abs(trade.entry_fill_price - trade.initial_stop_loss)
+        if risk > 0:
+            if trade.direction is CSDDirection.BULLISH:
+                trade.mfe_r = max(trade.mfe_r, (candle.high - trade.entry_fill_price) / risk)
+                trade.mae_r = min(trade.mae_r, (candle.low - trade.entry_fill_price) / risk)
+            else:
+                trade.mfe_r = max(trade.mfe_r, (trade.entry_fill_price - candle.low) / risk)
+                trade.mae_r = min(trade.mae_r, (trade.entry_fill_price - candle.high) / risk)
         stop_hit = candle.low <= trade.current_stop if trade.direction is CSDDirection.BULLISH else candle.high >= trade.current_stop
         targets_hit = [leg for leg in trade.legs if not leg.filled and self._target_hit(trade, leg, candle)]
         if stop_hit and targets_hit:

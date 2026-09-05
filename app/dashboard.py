@@ -162,7 +162,10 @@ def create_dashboard_app(
                                  "exit_reason": trade.exit_reason, "gross_r": str(trade.gross_r) if trade.gross_r is not None else None,
                                  "costs_r": str(trade.costs_r) if trade.costs_r is not None else None,
                                  "net_r": str(trade.net_r) if trade.net_r is not None else None,
-                                 "resolution_method": trade.resolution_method, "ambiguous_intrabar": trade.ambiguous_intrabar} for trade in trades]
+                                 "resolution_method": trade.resolution_method, "ambiguous_intrabar": trade.ambiguous_intrabar,
+                                 "bars_in_trade": trade.bars_in_trade, "mfe_r": str(trade.mfe_r) if trade.mfe_r is not None else None,
+                                 "mae_r": str(trade.mae_r) if trade.mae_r is not None else None,
+                                 "symbol": trade.symbol, "regime": trade.regime, "session": trade.session} for trade in trades]
             return report
         finally:
             database.close()

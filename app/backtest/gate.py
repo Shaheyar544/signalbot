@@ -36,6 +36,18 @@ def evaluate_gate(report: dict, settings: GoLiveGateSettings, *, now: datetime |
         failures.append("random baseline percentile below threshold")
     if Decimal(str(report.get("max_drawdown_r", 0))) > settings.max_drawdown_r:
         failures.append("maximum drawdown exceeds threshold")
+    ratio = report.get("in_sample_out_sample_ratio")
+    if ratio is None:
+        in_sample = report.get("in_sample_expectancy_r")
+        out_sample = report.get("out_of_sample_expectancy_r")
+        if in_sample is not None and out_sample is not None:
+            denominator = abs(Decimal(str(out_sample)))
+            ratio = Decimal("Infinity") if denominator == 0 else abs(Decimal(str(in_sample))) / denominator
+    if ratio is not None and Decimal(str(ratio)) > settings.max_in_sample_out_sample_ratio:
+        failures.append("in-sample/out-of-sample overfitting ratio exceeds threshold")
+    positive_symbols = report.get("positive_symbols", report.get("positive_symbol_count"))
+    if positive_symbols is not None and int(positive_symbols) < settings.require_positive_in_symbols:
+        failures.append("positive symbols below threshold")
     age = report.get("created_at")
     if age and now:
         created = datetime.fromisoformat(str(age))
