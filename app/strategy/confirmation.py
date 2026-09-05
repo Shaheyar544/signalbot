@@ -26,11 +26,15 @@ class ConfirmationResult:
 class ConfirmationEngine:
     """Evaluates transparent supporting evidence; it never creates an instruction to trade."""
     def __init__(self, volume_ratio_minimum: Decimal = Decimal("1"), rsi_bullish_minimum: Decimal = Decimal("50"),
-                 rsi_bearish_maximum: Decimal = Decimal("50")) -> None:
+                 rsi_bearish_maximum: Decimal = Decimal("50"), *,
+                 ema_separation_saturation_percent: Decimal = Decimal("0.5"),
+                 macd_histogram_saturation_percent: Decimal = Decimal("0.1")) -> None:
         if volume_ratio_minimum < 0 or not (Decimal(0) <= rsi_bullish_minimum <= Decimal(100) and Decimal(0) <= rsi_bearish_maximum <= Decimal(100)):
             raise ValueError("Invalid confirmation threshold")
         self.volume_ratio_minimum = volume_ratio_minimum
         self.rsi_bullish_minimum, self.rsi_bearish_maximum = rsi_bullish_minimum, rsi_bearish_maximum
+        self.ema_separation_saturation_percent = ema_separation_saturation_percent
+        self.macd_histogram_saturation_percent = macd_histogram_saturation_percent
 
     def evaluate(self, direction: CSDDirection, primary: IndicatorValues,
                  one_hour: IndicatorValues | None, four_hour: IndicatorValues | None) -> ConfirmationResult:
@@ -41,12 +45,28 @@ class ConfirmationEngine:
         return ConfirmationResult(
             direction=direction,
             ema=ema, rsi=rsi, macd=macd, volume=volume, one_hour=one_hour, four_hour=four_hour,
-            ema_quality=min(abs(primary.ema.get(10, Decimal(0)) - price) / price / Decimal("0.005"), Decimal(1)) if ema and price else Decimal(0),
+            ema_quality=self._ema_quality(primary) if ema else Decimal(0),
             rsi_quality=abs(primary.rsi - Decimal(50)) / Decimal(50) if rsi and primary.rsi is not None else Decimal(0),
-            macd_quality=min(abs(primary.macd.histogram) / Decimal("1"), Decimal(1)) if macd and primary.macd else Decimal(0),
+            macd_quality=self._macd_quality(primary) if macd else Decimal(0),
             volume_quality=min((primary.volume_ratio - Decimal(1)) / self.volume_ratio_minimum, Decimal(1)) if volume and primary.volume_ratio is not None and self.volume_ratio_minimum else Decimal(1) if volume else Decimal(0),
             htf_quality=Decimal("1") if one_hour and four_hour else Decimal("0.5") if one_hour or four_hour else Decimal(0),
         )
+
+    def _ema_quality(self, values: IndicatorValues) -> Decimal:
+        slow = values.ema.get(50, Decimal(0))
+        if not slow:
+            return Decimal(0)
+        separation_percent = abs(values.ema.get(10, Decimal(0)) - slow) / slow * Decimal(100)
+        return min(separation_percent / self.ema_separation_saturation_percent, Decimal(1))
+
+    def _macd_quality(self, values: IndicatorValues) -> Decimal:
+        if values.macd is None:
+            return Decimal(0)
+        price = values.ema.get(50, Decimal(0))
+        if not price:
+            return Decimal(0)
+        histogram_percent = abs(values.macd.histogram) / price * Decimal(100)
+        return min(histogram_percent / self.macd_histogram_saturation_percent, Decimal(1))
 
     @staticmethod
     def _aligned(direction: CSDDirection, values: IndicatorValues | None) -> bool:

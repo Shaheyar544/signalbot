@@ -101,7 +101,7 @@ def test_signals_endpoint_returns_persisted_analysis_records(tmp_path: Path):
     assert response.status_code == 200
     assert response.json()["signals"] == [{
         "signal_id": "ETHUSDT-15m-BULLISH-example", "symbol": "ETHUSDT", "timeframe": "15m",
-        "direction": "BULLISH", "classification": "STRONG_SIGNAL", "confidence": 9,
+        "direction": "BULLISH", "classification": "STRONG_SIGNAL", "confidence": "9",
         "entry_low": "100", "entry_high": "101", "reference_entry": "100.5", "stop_loss": "99",
         "take_profit_1": "102", "take_profit_2": "104", "take_profit_3": "106",
         "take_profit_4": None, "created_at": "2026-01-01T00:15:00+00:00",

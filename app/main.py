@@ -70,6 +70,7 @@ async def run(config_path: str) -> None:
         rsi_bullish_minimum=settings.confirmation.rsi_bullish_minimum,
         rsi_bearish_maximum=settings.confirmation.rsi_bearish_maximum,
         stop_buffer_percent=settings.risk.stop_buffer_percent,
+        scoring_settings=settings.scoring,
         on_risk_analysis=persist_signal,
     )
     bus.subscribe_candle_closed(strategy.on_candle_closed)

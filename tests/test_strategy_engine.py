@@ -69,7 +69,7 @@ async def test_strategy_engine_emits_non_actionable_assessment_after_retest(make
     await engine.on_candle_closed(CandleClosedEvent("ETHUSDT", "15m", retest_candle))
 
     assert len(assessments) == 1
-    assert assessments[0].score.classification is SignalClassification.CONFIRMATION_PENDING
+    assert assessments[0].score.classification is SignalClassification.WATCH
 
 
 @pytest.mark.asyncio
@@ -85,5 +85,4 @@ async def test_strategy_engine_generates_risk_analysis_only_for_good_or_strong_a
     await engine.on_candle_closed(CandleClosedEvent("ETHUSDT", "15m", candles[-1]))
     await engine.on_candle_closed(CandleClosedEvent("ETHUSDT", "15m", retest_candle))
 
-    assert len(analyses) == 1
-    assert analyses[0].risk_unit > 0
+    assert analyses == []

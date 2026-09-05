@@ -25,21 +25,28 @@ class BreakoutSetup:
     source_csd: CSDEvent
     status: BreakoutStatus = BreakoutStatus.PENDING_RETEST
     bars_after_breakout: int = 0
+    quality: Decimal = Decimal("0")
 
 
 class BreakoutEngine:
     """Owns independent pending retest setups keyed by pair and timeframe."""
-    def __init__(self, retest_zone_percent: Decimal = Decimal("0.20"), maximum_bars_after_breakout: int = 12) -> None:
-        if retest_zone_percent < 0 or maximum_bars_after_breakout < 0:
+    def __init__(self, retest_zone_percent: Decimal = Decimal("0.20"), maximum_bars_after_breakout: int = 12,
+                 breakout_saturation_percent: Decimal = Decimal("0.8")) -> None:
+        if retest_zone_percent < 0 or maximum_bars_after_breakout < 0 or breakout_saturation_percent <= 0:
             raise ValueError("retest configuration cannot be negative")
         self.retest_zone_percent = retest_zone_percent
         self.maximum_bars_after_breakout = maximum_bars_after_breakout
+        self.breakout_saturation_percent = breakout_saturation_percent
         self._setups: dict[tuple[str, str], BreakoutSetup] = {}
 
     def start(self, event: CSDEvent) -> BreakoutSetup:
         level = event.broken_swing.price
         offset = level * self.retest_zone_percent / Decimal(100)
-        setup = BreakoutSetup(event.symbol, event.timeframe, event.direction, level, level - offset, level + offset, event)
+        # A close farther beyond the broken level is a stronger breakout; cap at saturation.
+        breakout_distance = abs(event.candle.close - level) / level * Decimal(100)
+        quality = min(breakout_distance / self.breakout_saturation_percent, Decimal(1))
+        setup = BreakoutSetup(event.symbol, event.timeframe, event.direction, level, level - offset, level + offset, event,
+                              quality=quality)
         self._setups[(event.symbol, event.timeframe)] = setup
         return setup
 

@@ -54,6 +54,23 @@ class ConfirmationSettings:
 
 
 @dataclass(frozen=True)
+class ScoringSettings:
+    """Temporary V1 quality normalizers and weights; recalibrate after validation."""
+    csd_saturation_percent: Decimal = Decimal("0.8")
+    breakout_saturation_percent: Decimal = Decimal("0.8")
+    ema_separation_saturation_percent: Decimal = Decimal("0.5")
+    macd_histogram_saturation_percent: Decimal = Decimal("0.1")
+    csd_weight: Decimal = Decimal("2.0")
+    breakout_weight: Decimal = Decimal("2.0")
+    retest_weight: Decimal = Decimal("2.0")
+    ema_weight: Decimal = Decimal("1.5")
+    rsi_weight: Decimal = Decimal("1.0")
+    macd_weight: Decimal = Decimal("1.0")
+    volume_weight: Decimal = Decimal("1.0")
+    htf_weight: Decimal = Decimal("1.5")
+
+
+@dataclass(frozen=True)
 class RiskSettings:
     stop_buffer_percent: Decimal = Decimal("0")
 
@@ -71,6 +88,7 @@ class Settings:
     csd: CSDSettings
     retest: RetestSettings
     confirmation: ConfirmationSettings
+    scoring: ScoringSettings
     risk: RiskSettings
 
     @property
@@ -137,6 +155,19 @@ def load_settings(path: str | Path = "config.yaml") -> Settings:
     volume_ratio = Decimal(str(confirmation.get("volume_ratio_minimum", "1")))
     if not (Decimal(0) <= bullish_rsi <= Decimal(100) and Decimal(0) <= bearish_rsi <= Decimal(100) and volume_ratio >= 0):
         raise ValueError("confirmation RSI thresholds must be 0–100 and volume_ratio_minimum cannot be negative")
+    scoring = raw.get("scoring", {})
+    scoring_values = {
+        name: Decimal(str(scoring.get(name, default)))
+        for name, default in {
+            "csd_saturation_percent": "0.8", "breakout_saturation_percent": "0.8",
+            "ema_separation_saturation_percent": "0.5", "macd_histogram_saturation_percent": "0.1",
+            "csd_weight": "2.0", "breakout_weight": "2.0", "retest_weight": "2.0",
+            "ema_weight": "1.5", "rsi_weight": "1.0", "macd_weight": "1.0",
+            "volume_weight": "1.0", "htf_weight": "1.5",
+        }.items()
+    }
+    if any(value <= 0 for value in scoring_values.values()):
+        raise ValueError("scoring saturations and weights must be positive")
     risk = raw.get("risk", {})
     stop_buffer = Decimal(str(risk.get("stop_buffer_percent", "0")))
     if stop_buffer < 0:
@@ -157,5 +188,6 @@ def load_settings(path: str | Path = "config.yaml") -> Settings:
         csd=CSDSettings(minimum_distance),
         retest=RetestSettings(retest_zone, maximum_bars),
         confirmation=ConfirmationSettings(bullish_rsi, bearish_rsi, volume_ratio),
+        scoring=ScoringSettings(**scoring_values),
         risk=RiskSettings(stop_buffer),
     )

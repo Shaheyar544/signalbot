@@ -20,7 +20,7 @@ def _assessment(make_candle, direction=CSDDirection.BULLISH):
     setup = BreakoutSetup(source.symbol, source.timeframe, direction, level, Decimal("99.8"), Decimal("100.2"), csd, BreakoutStatus.RETEST_DETECTED)
     retest = RetestEvent(source.symbol, source.timeframe, retest_candle, level, BreakoutStatus.RETEST_DETECTED, setup)
     confirmation = ConfirmationResult(direction, True, True, True, True, True, True)
-    return SetupAssessment(retest, confirmation, ConfidenceScore(True, 4, SignalClassification.CONFIRMATION_PENDING))
+    return SetupAssessment(retest, confirmation, ConfidenceScore(Decimal("8"), {}, SignalClassification.STRONG_SIGNAL))
 
 
 def test_risk_engine_calculates_bullish_retest_zone_stop_targets_and_risk(make_candle):

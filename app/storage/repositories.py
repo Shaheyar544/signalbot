@@ -49,7 +49,7 @@ class SignalRepository:
             """INSERT INTO signals (signal_id,symbol,timeframe,direction,classification,confidence,entry_low,entry_high,reference_entry,stop_loss,take_profit_1,take_profit_2,take_profit_3,take_profit_4,created_at)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(signal_id) DO NOTHING""",
             (record.signal_id, record.symbol, record.timeframe, record.direction, record.classification,
-             record.confidence, str(record.entry_low), str(record.entry_high), str(record.reference_entry),
+             str(record.confidence), str(record.entry_low), str(record.entry_high), str(record.reference_entry),
              str(record.stop_loss), str(record.take_profit_1), str(record.take_profit_2), str(record.take_profit_3),
              str(record.take_profit_4) if record.take_profit_4 is not None else None, record.created_at.isoformat()),
         )
@@ -65,7 +65,7 @@ class SignalRepository:
             return None
         from app.strategy.scoring import SignalClassification
         from app.structure.csd import CSDDirection
-        return SignalRecord(row[0], row[1], row[2], CSDDirection(row[3]), SignalClassification(row[4]), row[5],
+        return SignalRecord(row[0], row[1], row[2], CSDDirection(row[3]), SignalClassification(row[4]), Decimal(row[5]),
                             *(Decimal(value) for value in row[6:13]), Decimal(row[13]) if row[13] is not None else None,
                             datetime.fromisoformat(row[14]))
 
@@ -98,5 +98,9 @@ class BacktestRepository:
     def save_trade(self, trade: TradeAudit) -> None:
         connection = self.database.connection
         if connection is None: raise RuntimeError("Database is not open")
-        values = (trade.trade_id, trade.run_id, trade.signal_time.isoformat(), trade.direction, *(str(x) if x is not None else None for x in (trade.entry_price, trade.stop_loss, trade.take_profit_1, trade.take_profit_2, trade.take_profit_3)), int(trade.setup_valid), trade.confluence_score, trade.exit_time.isoformat() if trade.exit_time else None, trade.exit_reason, *(str(x) if x is not None else None for x in (trade.gross_r, trade.costs_r, trade.net_r)), trade.resolution_method, int(trade.ambiguous_intrabar))
-        connection.execute("INSERT INTO backtest_trades VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values); connection.commit()
+        values = (trade.trade_id, trade.run_id, trade.signal_time.isoformat(), trade.direction, *(str(x) if x is not None else None for x in (trade.entry_price, trade.stop_loss, trade.take_profit_1, trade.take_profit_2, trade.take_profit_3)), str(trade.score_total), str(trade.score_classification), trade.exit_time.isoformat() if trade.exit_time else None, trade.exit_reason, *(str(x) if x is not None else None for x in (trade.gross_r, trade.costs_r, trade.net_r)), trade.resolution_method, int(trade.ambiguous_intrabar))
+        connection.execute("""INSERT INTO backtest_trades
+            (trade_id,run_id,signal_time,direction,entry_price,stop_loss,take_profit_1,take_profit_2,take_profit_3,
+             score_total,score_classification,exit_time,exit_reason,gross_r,costs_r,net_r,resolution_method,ambiguous_intrabar)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", values)
+        connection.commit()

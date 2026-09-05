@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from app.indicators.engine import IndicatorValues, MacdValues
-from app.strategy.confirmation import ConfirmationEngine
+from app.strategy.confirmation import ConfirmationEngine, ConfirmationResult
 from app.strategy.scoring import ScoringEngine, SignalClassification
 from app.structure.csd import CSDDirection
 
@@ -47,3 +47,21 @@ def test_scoring_engine_reaches_watch_for_medium_quality_setup():
     score = ScoringEngine().score(confirmation, csd_quality=Decimal("0.6"), breakout_quality=Decimal("0.6"), retest_quality=Decimal("0.6"))
 
     assert score.classification is SignalClassification.WATCH
+
+
+def test_scoring_boundaries_make_every_classification_reachable():
+    confirmation = ConfirmationResult(
+        CSDDirection.BULLISH, False, False, False, False, False, False,
+        Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"),
+    )
+    engine = ScoringEngine()
+
+    assert engine.score(confirmation, csd_quality=Decimal("0"), breakout_quality=Decimal("0"), retest_quality=Decimal("0")).classification is SignalClassification.NO_TRADE
+    assert engine.score(confirmation, csd_quality=Decimal("0.9"), breakout_quality=Decimal("0.9"), retest_quality=Decimal("0")).classification is SignalClassification.WATCH
+    assert engine.score(confirmation, csd_quality=Decimal("1"), breakout_quality=Decimal("1"), retest_quality=Decimal("1")).classification is SignalClassification.GOOD_SIGNAL
+
+    strong_confirmation = ConfirmationResult(
+        CSDDirection.BULLISH, True, False, False, False, True, True,
+        Decimal("1"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("1"),
+    )
+    assert engine.score(strong_confirmation, csd_quality=Decimal("1"), breakout_quality=Decimal("1"), retest_quality=Decimal("1")).classification is SignalClassification.STRONG_SIGNAL

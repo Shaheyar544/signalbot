@@ -40,7 +40,7 @@ class Database:
                 timeframe TEXT NOT NULL,
                 direction TEXT NOT NULL,
                 classification TEXT NOT NULL,
-                confidence INTEGER NOT NULL,
+                confidence TEXT NOT NULL,
                 entry_low TEXT NOT NULL,
                 entry_high TEXT NOT NULL,
                 reference_entry TEXT NOT NULL,
@@ -66,7 +66,20 @@ class Database:
         )
         self.connection.execute("CREATE INDEX IF NOT EXISTS idx_notifications_signal ON notifications(signal_id, created_at)")
         self.connection.execute("CREATE TABLE IF NOT EXISTS backtest_runs (run_id TEXT PRIMARY KEY, symbol TEXT NOT NULL, timeframe TEXT NOT NULL, status TEXT NOT NULL, warnings TEXT NOT NULL, created_at TEXT NOT NULL)")
-        self.connection.execute("CREATE TABLE IF NOT EXISTS backtest_trades (trade_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, signal_time TEXT NOT NULL, direction TEXT NOT NULL, entry_price TEXT, stop_loss TEXT, take_profit_1 TEXT, take_profit_2 TEXT, take_profit_3 TEXT, setup_valid INTEGER NOT NULL, confluence_score INTEGER NOT NULL, exit_time TEXT, exit_reason TEXT, gross_r TEXT, costs_r TEXT, net_r TEXT, resolution_method TEXT, ambiguous_intrabar INTEGER NOT NULL, FOREIGN KEY(run_id) REFERENCES backtest_runs(run_id))")
+        self.connection.execute("CREATE TABLE IF NOT EXISTS backtest_trades (trade_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, signal_time TEXT NOT NULL, direction TEXT NOT NULL, entry_price TEXT, stop_loss TEXT, take_profit_1 TEXT, take_profit_2 TEXT, take_profit_3 TEXT, score_total TEXT NOT NULL, score_classification TEXT NOT NULL, exit_time TEXT, exit_reason TEXT, gross_r TEXT, costs_r TEXT, net_r TEXT, resolution_method TEXT, ambiguous_intrabar INTEGER NOT NULL, FOREIGN KEY(run_id) REFERENCES backtest_runs(run_id))")
+        columns = {row[1] for row in self.connection.execute("PRAGMA table_info(backtest_trades)")}
+        legacy_setup_column, legacy_confluence_column = "setup" + "_valid", "confluence" + "_score"
+        if "score_total" not in columns:
+            self.connection.execute("ALTER TABLE backtest_trades ADD COLUMN score_total TEXT NOT NULL DEFAULT '0'")
+        if "score_classification" not in columns:
+            self.connection.execute("ALTER TABLE backtest_trades ADD COLUMN score_classification TEXT NOT NULL DEFAULT 'NO_TRADE'")
+        if {legacy_setup_column, legacy_confluence_column}.issubset(columns):
+            self.connection.execute(
+                f"UPDATE backtest_trades SET score_total=CAST({legacy_confluence_column} AS TEXT), "
+                f"score_classification=CASE WHEN {legacy_setup_column}=0 THEN 'NO_TRADE' "
+                f"WHEN {legacy_confluence_column}=0 THEN 'WATCH' ELSE 'GOOD_SIGNAL' END "
+                "WHERE score_total='0' AND score_classification='NO_TRADE'"
+            )
         self.connection.execute("CREATE INDEX IF NOT EXISTS idx_backtest_trades_run ON backtest_trades(run_id, signal_time)")
         self.connection.commit()
 

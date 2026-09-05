@@ -35,8 +35,8 @@ async def test_runner_persists_real_strategy_signal_with_actual_confluence(make_
     retest=priced(51,3,Decimal('2.1'),Decimal('1.9'),'2')
     candles += [priced(45,1,1), priced(46,3,1), priced(47,1,1), priced(48,2,1), priced(49,1,1), priced(50,3,3), retest]
     run=await HistoricalBacktestRunner(settings, BacktestRepository(database)).run(candles)
-    row=database.connection.execute('SELECT setup_valid,confluence_score FROM backtest_trades WHERE run_id=?',(run.run_id,)).fetchone()
-    assert row is not None and row[0] == 1 and row[1] >= 1
+    row=database.connection.execute('SELECT score_total,score_classification FROM backtest_trades WHERE run_id=?',(run.run_id,)).fetchone()
+    assert row is not None and Decimal(row[0]) >= 0 and row[1] in {"GOOD_SIGNAL", "STRONG_SIGNAL"}
 
 @pytest.mark.asyncio
 async def test_real_strategy_same_candle_collision_persists_sl_first(make_candle):

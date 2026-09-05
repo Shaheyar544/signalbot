@@ -15,6 +15,8 @@ from app.strategy.confirmation import ConfirmationEngine, ConfirmationResult
 from app.strategy.retest import RetestEngine, RetestEvent
 from app.strategy.risk import RiskAnalysis, RiskEngine
 from app.strategy.scoring import ConfidenceScore, ScoringEngine, SignalClassification
+from app.strategy.scoring import ScoringWeights
+from app.config.settings import ScoringSettings
 from app.structure.csd import CSDEngine, CSDEvent
 from app.structure.market_structure import MarketStructureEngine, StructureEvent
 from app.structure.swings import SwingDetector
@@ -44,7 +46,10 @@ class CSDStrategyEngine:
                  on_retest: RetestHandler | None = None, maximum_bars_after_breakout: int = 12,
                  on_assessment: AssessmentHandler | None = None, volume_ratio_minimum: Decimal = Decimal("1"),
                  rsi_bullish_minimum: Decimal = Decimal("50"), rsi_bearish_maximum: Decimal = Decimal("50"),
-                 stop_buffer_percent: Decimal = Decimal("0"), on_risk_analysis: RiskHandler | None = None) -> None:
+                 stop_buffer_percent: Decimal = Decimal("0"), on_risk_analysis: RiskHandler | None = None,
+                 scoring_settings: ScoringSettings | None = None) -> None:
+        scoring_settings = scoring_settings or ScoringSettings()
+        self.scoring_settings = scoring_settings
         self.store = store
         self.primary_timeframe = primary_timeframe
         self.indicators = IndicatorEngine()
@@ -52,10 +57,20 @@ class CSDStrategyEngine:
         self.swing_store = SwingStore()
         self.structure = MarketStructureEngine()
         self.csd = CSDEngine(minimum_close_distance_percent)
-        self.breakouts = BreakoutEngine(retest_zone_percent, maximum_bars_after_breakout)
+        self.breakouts = BreakoutEngine(retest_zone_percent, maximum_bars_after_breakout,
+                                        scoring_settings.breakout_saturation_percent)
         self.retests = RetestEngine(self.breakouts)
-        self.confirmation = ConfirmationEngine(volume_ratio_minimum, rsi_bullish_minimum, rsi_bearish_maximum)
-        self.scoring = ScoringEngine()
+        self.confirmation = ConfirmationEngine(
+            volume_ratio_minimum, rsi_bullish_minimum, rsi_bearish_maximum,
+            ema_separation_saturation_percent=scoring_settings.ema_separation_saturation_percent,
+            macd_histogram_saturation_percent=scoring_settings.macd_histogram_saturation_percent,
+        )
+        self.scoring = ScoringEngine(ScoringWeights(
+            csd=scoring_settings.csd_weight, breakout=scoring_settings.breakout_weight,
+            retest=scoring_settings.retest_weight, ema=scoring_settings.ema_weight,
+            rsi=scoring_settings.rsi_weight, macd=scoring_settings.macd_weight,
+            volume=scoring_settings.volume_weight, htf=scoring_settings.htf_weight,
+        ))
         self.risk = RiskEngine(stop_buffer_percent)
         self.on_csd = on_csd
         self.on_retest = on_retest
@@ -86,11 +101,20 @@ class CSDStrategyEngine:
                     self.latest_indicators.get((event.symbol, "1h")),
                     self.latest_indicators.get((event.symbol, "4h")),
                 )
-                csd_quality = min(retest_event.setup.source_csd.close_distance_percent / Decimal("0.8"), Decimal(1))
-                breakout_quality = min(abs(retest_event.setup.source_csd.candle.close - retest_event.setup.breakout_level) / retest_event.setup.breakout_level / Decimal("0.008"), Decimal(1))
-                zone_width = retest_event.setup.zone_upper - retest_event.setup.zone_lower
-                retest_quality = min(abs(retest_event.candle.close - retest_event.breakout_level) / zone_width, Decimal(1)) if zone_width else Decimal(0)
-                assessment = SetupAssessment(retest_event, confirmation, self.scoring.score(confirmation, csd_quality=csd_quality, breakout_quality=breakout_quality, retest_quality=retest_quality))
+                csd_quality = min(
+                    retest_event.setup.source_csd.close_distance_percent / self.scoring_settings.csd_saturation_percent,
+                    Decimal(1),
+                )
+                assessment = SetupAssessment(
+                    retest_event,
+                    confirmation,
+                    self.scoring.score(
+                        confirmation,
+                        csd_quality=csd_quality,
+                        breakout_quality=retest_event.setup.quality,
+                        retest_quality=retest_event.quality,
+                    ),
+                )
                 self.latest_assessment[key] = assessment
                 if self.on_assessment is not None:
                     result = self.on_assessment(assessment)

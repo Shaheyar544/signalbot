@@ -29,7 +29,7 @@ class FailingProvider:
 
 def _record():
     return SignalRecord("ETHUSDT-15m-BULLISH-test-100", "ETHUSDT", "15m", CSDDirection.BULLISH,
-                           SignalClassification.CONFIRMATION_PENDING, 4, Decimal("99"), Decimal("101"), Decimal("100"),
+                           SignalClassification.STRONG_SIGNAL, Decimal("8"), Decimal("99"), Decimal("101"), Decimal("100"),
                         Decimal("98"), Decimal("102"), Decimal("104"), Decimal("106"), None, datetime.now(timezone.utc))
 
 
