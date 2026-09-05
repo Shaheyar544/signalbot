@@ -1,0 +1,18 @@
+services:
+  signal-engine:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - signal_data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "python", "scripts/health_check.py", "--database", "/app/data/signal_engine.db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  signal_data:

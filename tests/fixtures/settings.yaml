@@ -1,0 +1,5 @@
+symbols:
+  eth/usdt: {enabled: true}
+  BTCUSDT: {enabled: false}
+timeframes: {primary: 15m, confirmation: [1h, 4h]}
+data: {historical_candle_limit: 42, database_path: data/test.db}

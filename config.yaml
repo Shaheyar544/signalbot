@@ -1,0 +1,45 @@
+symbols:
+  ETHUSDT:
+    enabled: true
+  BTCUSDT:
+    enabled: false
+  SOLUSDT:
+    enabled: false
+  BNBUSDT:
+    enabled: false
+
+timeframes:
+  primary: 15m
+  confirmation: [1h, 4h]
+
+market:
+  exchange: binance
+  market_type: usd_m_futures
+
+data:
+  historical_candle_limit: 500
+  database_path: data/signal_engine.db
+
+websocket:
+  reconnect_enabled: true
+  max_reconnect_delay_seconds: 60
+  receive_timeout_seconds: 90
+
+swing:
+  left_bars: 3
+  right_bars: 3
+
+csd:
+  minimum_close_distance_percent: 0.05
+
+retest:
+  zone_percent: 0.20
+  maximum_bars_after_breakout: 12
+
+confirmation:
+  rsi_bullish_minimum: 50
+  rsi_bearish_maximum: 50
+  volume_ratio_minimum: 1
+
+risk:
+  stop_buffer_percent: 0
