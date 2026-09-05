@@ -18,6 +18,7 @@ from app.strategy.scoring import ConfidenceScore, ScoringEngine, SignalClassific
 from app.structure.csd import CSDEngine, CSDEvent
 from app.structure.market_structure import MarketStructureEngine, StructureEvent
 from app.structure.swings import SwingDetector
+from app.structure.swing_store import SwingStore
 
 LOGGER = logging.getLogger(__name__)
 CSDHandler = Callable[[CSDEvent], Awaitable[None] | None]
@@ -48,6 +49,7 @@ class CSDStrategyEngine:
         self.primary_timeframe = primary_timeframe
         self.indicators = IndicatorEngine()
         self.swings = SwingDetector(left_bars, right_bars)
+        self.swing_store = SwingStore()
         self.structure = MarketStructureEngine()
         self.csd = CSDEngine(minimum_close_distance_percent)
         self.breakouts = BreakoutEngine(retest_zone_percent, maximum_bars_after_breakout)
@@ -84,20 +86,25 @@ class CSDStrategyEngine:
                     self.latest_indicators.get((event.symbol, "1h")),
                     self.latest_indicators.get((event.symbol, "4h")),
                 )
-                assessment = SetupAssessment(retest_event, confirmation, self.scoring.score(confirmation, has_csd=True, has_breakout=True, has_retest=True))
+                csd_quality = min(retest_event.setup.source_csd.close_distance_percent / Decimal("0.8"), Decimal(1))
+                breakout_quality = min(abs(retest_event.setup.source_csd.candle.close - retest_event.setup.breakout_level) / retest_event.setup.breakout_level / Decimal("0.008"), Decimal(1))
+                zone_width = retest_event.setup.zone_upper - retest_event.setup.zone_lower
+                retest_quality = min(abs(retest_event.candle.close - retest_event.breakout_level) / zone_width, Decimal(1)) if zone_width else Decimal(0)
+                assessment = SetupAssessment(retest_event, confirmation, self.scoring.score(confirmation, csd_quality=csd_quality, breakout_quality=breakout_quality, retest_quality=retest_quality))
                 self.latest_assessment[key] = assessment
                 if self.on_assessment is not None:
                     result = self.on_assessment(assessment)
                     if inspect.isawaitable(result):
                         await result
-                if assessment.score.classification is SignalClassification.CONFIRMATION_PENDING:
+                if assessment.score.classification in {SignalClassification.GOOD_SIGNAL, SignalClassification.STRONG_SIGNAL}:
                     analysis = self.risk.calculate(assessment, self.latest_structure.get(key, []))
                     self.latest_risk_analysis[key] = analysis
                     if self.on_risk_analysis is not None:
                         result = self.on_risk_analysis(analysis)
                         if inspect.isawaitable(result):
                             await result
-        structure = self.structure.evaluate(event.symbol, event.timeframe, self.swings.detect(candles))
+        self.swing_store.replace(self.swings.detect(candles))
+        structure = self.structure.evaluate(event.symbol, event.timeframe, self.swing_store.get_swings(event.candle.close_time))
         self.latest_structure[key] = structure
         csd_event = self.csd.evaluate(event.candle, structure)
         if csd_event is not None:

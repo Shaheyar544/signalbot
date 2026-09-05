@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import Sequence
 
 from app.events.models import Candle
+from app.structure.timeframes import duration
 
 
 class SwingType(StrEnum):
@@ -22,6 +23,7 @@ class SwingPoint:
     price: Decimal
     kind: SwingType
     candle: Candle
+    confirmed_time: datetime | None = None
 
 
 class SwingDetector:
@@ -38,7 +40,7 @@ class SwingDetector:
             before = ordered[index - self.left_bars:index]
             after = ordered[index + 1:index + self.right_bars + 1]
             if all(candidate.high > candle.high for candle in (*before, *after)):
-                swings.append(SwingPoint(candidate.symbol, candidate.timeframe, candidate.open_time, candidate.high, SwingType.HIGH, candidate))
+                swings.append(SwingPoint(candidate.symbol, candidate.timeframe, candidate.open_time, candidate.high, SwingType.HIGH, candidate, candidate.close_time + duration(candidate.timeframe) * self.right_bars))
             if all(candidate.low < candle.low for candle in (*before, *after)):
-                swings.append(SwingPoint(candidate.symbol, candidate.timeframe, candidate.open_time, candidate.low, SwingType.LOW, candidate))
+                swings.append(SwingPoint(candidate.symbol, candidate.timeframe, candidate.open_time, candidate.low, SwingType.LOW, candidate, candidate.close_time + duration(candidate.timeframe) * self.right_bars))
         return swings

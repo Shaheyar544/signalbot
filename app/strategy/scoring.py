@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 
 from app.strategy.confirmation import ConfirmationResult
@@ -9,24 +10,28 @@ from app.strategy.confirmation import ConfirmationResult
 class SignalClassification(StrEnum):
     NO_TRADE = "NO_TRADE"
     WATCH = "WATCH"
-    CONFIRMATION_PENDING = "CONFIRMATION_PENDING"
+    GOOD_SIGNAL = "GOOD_SIGNAL"
+    STRONG_SIGNAL = "STRONG_SIGNAL"
 
 
 @dataclass(frozen=True)
 class ConfidenceScore:
-    setup_valid: bool
-    confluence_score: int
+    total: Decimal
+    components: dict[str, Decimal]
     classification: SignalClassification
 
 
 class ScoringEngine:
-    def score(self, confirmation: ConfirmationResult, *, has_csd: bool, has_breakout: bool, has_retest: bool) -> ConfidenceScore:
-        setup_valid = has_csd and has_breakout and has_retest
-        confluence_score = int(confirmation.ema) + int(confirmation.rsi) + int(confirmation.macd) + int(confirmation.volume)
-        if not setup_valid:
+    # TODO: recalibrate thresholds from validation report.
+    def score(self, confirmation: ConfirmationResult, *, csd_quality: Decimal, breakout_quality: Decimal, retest_quality: Decimal) -> ConfidenceScore:
+        raw = {"csd": csd_quality*2, "breakout": breakout_quality*2, "retest": retest_quality*2, "ema": confirmation.ema_quality*Decimal("1.5"), "rsi": confirmation.rsi_quality, "macd": confirmation.macd_quality, "volume": confirmation.volume_quality, "htf": confirmation.htf_quality*Decimal("1.5")}
+        total = sum(raw.values()) * Decimal(10) / Decimal(12)
+        if total < Decimal("3"):
             classification = SignalClassification.NO_TRADE
-        elif confluence_score == 0:
+        elif total < Decimal("5"):
             classification = SignalClassification.WATCH
+        elif total < Decimal("7.5"):
+            classification = SignalClassification.GOOD_SIGNAL
         else:
-            classification = SignalClassification.CONFIRMATION_PENDING
-        return ConfidenceScore(setup_valid, confluence_score, classification)
+            classification = SignalClassification.STRONG_SIGNAL
+        return ConfidenceScore(total, raw, classification)

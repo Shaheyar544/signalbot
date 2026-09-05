@@ -32,21 +32,18 @@ def test_confirmation_engine_mirrors_bearish_conditions():
     assert all((result.ema, result.rsi, result.macd, result.volume, result.one_hour, result.four_hour))
 
 
-def test_scoring_engine_separates_valid_setup_from_four_point_confluence():
+def test_scoring_engine_uses_continuous_quality_components_for_strong_setup():
     confirmation = ConfirmationEngine().evaluate(CSDDirection.BULLISH, _indicators(), _indicators(), _indicators())
 
-    score = ScoringEngine().score(confirmation, has_csd=True, has_breakout=True, has_retest=True)
+    score = ScoringEngine().score(confirmation, csd_quality=Decimal("1"), breakout_quality=Decimal("1"), retest_quality=Decimal("1"))
 
-    assert score.setup_valid is True
-    assert score.confluence_score == 4
-    assert score.classification is SignalClassification.CONFIRMATION_PENDING
+    assert Decimal("7.5") <= score.total <= Decimal("10")
+    assert score.classification is SignalClassification.STRONG_SIGNAL
 
 
-def test_scoring_engine_classifies_required_setup_without_support_as_watch():
+def test_scoring_engine_reaches_watch_for_medium_quality_setup():
     confirmation = ConfirmationEngine().evaluate(CSDDirection.BULLISH, _indicators(ema_fast="90", ema_slow="100", rsi="40", histogram="-1", volume_ratio="0.5"), None, None)
 
-    score = ScoringEngine().score(confirmation, has_csd=True, has_breakout=True, has_retest=True)
+    score = ScoringEngine().score(confirmation, csd_quality=Decimal("0.6"), breakout_quality=Decimal("0.6"), retest_quality=Decimal("0.6"))
 
-    assert score.setup_valid is True
-    assert score.confluence_score == 0
     assert score.classification is SignalClassification.WATCH

@@ -40,6 +40,6 @@ class SignalRecord:
     @classmethod
     def from_analysis(cls, assessment: SetupAssessment, risk: RiskAnalysis) -> "SignalRecord":
         return cls(build_signal_id(assessment), risk.symbol, risk.timeframe, risk.direction,
-                   assessment.score.classification, assessment.score.confluence_score, risk.entry_low, risk.entry_high,
+                   assessment.score.classification, int(assessment.score.total), risk.entry_low, risk.entry_high,
                    risk.reference_entry, risk.stop_loss, risk.take_profits[0], risk.take_profits[1],
                    risk.take_profits[2], risk.take_profit_4, assessment.retest.candle.close_time)
