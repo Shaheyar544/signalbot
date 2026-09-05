@@ -335,9 +335,17 @@ async def build_symbol_validation(settings: Settings, candles: Sequence[Candle],
     audits = [audit for audit in candidate_results.values() if audit is not None]
     metrics = calculate_metrics(audits)
     random_candidates = _build_random_entry_candidates(settings, ordered, plans)
+    random_results: dict[int, TradeAudit | None] = {}
+
+    def simulate_random(candidate: RandomEntryCandidate) -> TradeAudit | None:
+        key = id(candidate)
+        if key not in random_results:
+            random_results[key] = simulator.simulate(candidate.plan, ordered, "random-entry")
+        return random_results[key]
+
     baseline = run_random_entry_experiment(
         random_candidates,
-        lambda candidate: simulator.simulate(candidate.plan, ordered, "random-entry"),
+        simulate_random,
         trade_count=min(len(audits), len(random_candidates)), iterations=baseline_iterations,
         observed_expectancy=metrics.expectancy_r,
     ) if audits and random_candidates else None

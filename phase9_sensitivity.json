@@ -1,0 +1,9 @@
+{
+  "dimensions": {
+    "left_bars": [2, 3, 4, 5],
+    "right_bars": [2, 3, 4, 5],
+    "minimum_close_distance_percent": [0.03, 0.05, 0.07, 0.10],
+    "retest.zone_percent": [0.15, 0.20, 0.25, 0.30],
+    "maximum_bars_after_breakout": [8, 12, 16, 20]
+  }
+}
