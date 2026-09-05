@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.events.models import Candle
-from app.signals.models import SignalRecord
+from app.signals.models import SignalRecord, signal_evidence
 from app.notifications.base import DeliveryResult
 from app.storage.database import Database
 from app.backtests import BacktestRun, TradeAudit, BacktestStatus
@@ -85,8 +85,12 @@ class SignalRepository:
              str(record.stop_loss), str(record.take_profit_1), str(record.take_profit_2), str(record.take_profit_3),
              str(record.take_profit_4) if record.take_profit_4 is not None else None, record.created_at.isoformat()),
         )
+        saved = cursor.rowcount == 1
+        if saved:
+            connection.execute("INSERT INTO signal_evidence (signal_id,payload) VALUES (?,?)",
+                               (record.signal_id, json.dumps(signal_evidence(assessment, risk))))
         connection.commit()
-        return cursor.rowcount == 1
+        return saved
 
     def get(self, signal_id: str) -> SignalRecord | None:
         connection = self.database.connection
@@ -100,6 +104,13 @@ class SignalRepository:
         return SignalRecord(row[0], row[1], row[2], CSDDirection(row[3]), SignalClassification(row[4]), Decimal(row[5]),
                             *(Decimal(value) for value in row[6:13]), Decimal(row[13]) if row[13] is not None else None,
                             datetime.fromisoformat(row[14]))
+
+    def get_evidence(self, signal_id: str) -> dict | None:
+        connection = self.database.connection
+        if connection is None:
+            raise RuntimeError("Database is not open")
+        row = connection.execute("SELECT payload FROM signal_evidence WHERE signal_id=?", (signal_id,)).fetchone()
+        return json.loads(row[0]) if row is not None else None
 
 
 class NotificationRepository:

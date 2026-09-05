@@ -19,6 +19,28 @@ def build_signal_id(assessment: SetupAssessment) -> str:
     return f"{setup.symbol}-{setup.timeframe}-{setup.direction}-{swing.candle_open_time.isoformat()}-{swing.price}"
 
 
+def signal_evidence(assessment: SetupAssessment, risk: RiskAnalysis) -> dict[str, object]:
+    """Serialize already-computed analysis facts for read-only explanation."""
+    retest = assessment.retest
+    setup = retest.setup
+    csd = setup.source_csd
+    confirmation = assessment.confirmation
+    return {
+        "structure": {"swing_kind": str(csd.broken_swing.kind), "swing_price": str(csd.broken_swing.price),
+                      "swing_time": csd.broken_swing.candle_open_time.isoformat()},
+        "csd": {"direction": str(csd.direction), "time": csd.candle.close_time.isoformat(),
+                "close_distance_percent": str(csd.close_distance_percent)},
+        "breakout": {"level": str(setup.breakout_level), "zone_lower": str(setup.zone_lower),
+                     "zone_upper": str(setup.zone_upper), "status": str(setup.status), "quality": str(setup.quality)},
+        "retest": {"time": retest.candle.close_time.isoformat(), "status": str(retest.status), "quality": str(retest.quality)},
+        "confirmation": {"ema": confirmation.ema, "rsi": confirmation.rsi, "macd": confirmation.macd,
+                         "volume": confirmation.volume, "one_hour": confirmation.one_hour, "four_hour": confirmation.four_hour},
+        "score": {"total": str(assessment.score.total), "classification": str(assessment.score.classification),
+                  "components": {key: str(value) for key, value in assessment.score.components.items()}},
+        "risk": {"risk_unit": str(risk.risk_unit)},
+    }
+
+
 @dataclass(frozen=True)
 class SignalRecord:
     signal_id: str

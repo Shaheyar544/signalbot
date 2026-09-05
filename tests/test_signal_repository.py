@@ -40,6 +40,11 @@ def test_signal_repository_persists_and_retrieves_stable_record(make_candle):
     assert record.signal_id == signal_id
     assert record.reference_entry == Decimal("100")
     assert record.take_profit_4 == Decimal("105")
+    evidence = repository.get_evidence(signal_id)
+    assert evidence is not None
+    assert evidence["csd"]["direction"] == "BULLISH"
+    assert evidence["confirmation"]["one_hour"] is True
+    assert evidence["risk"]["risk_unit"] == "1"
     database.close()
 
 

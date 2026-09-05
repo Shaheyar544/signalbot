@@ -54,6 +54,14 @@ class Database:
         )
         self.connection.execute("CREATE INDEX IF NOT EXISTS idx_signals_lookup ON signals(symbol, timeframe, created_at)")
         self.connection.execute(
+            """CREATE TABLE IF NOT EXISTS signal_evidence (
+                signal_id TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(signal_id) REFERENCES signals(signal_id)
+            )"""
+        )
+        self.connection.execute(
             """CREATE TABLE IF NOT EXISTS notifications (
                 id INTEGER PRIMARY KEY,
                 signal_id TEXT NOT NULL,

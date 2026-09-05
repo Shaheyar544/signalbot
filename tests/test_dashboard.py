@@ -107,6 +107,25 @@ def test_signals_endpoint_returns_persisted_analysis_records(tmp_path: Path):
         "take_profit_4": None, "created_at": "2026-01-01T00:15:00+00:00",
     }]
 
+    detail = TestClient(app).get("/api/signals/ETHUSDT-15m-BULLISH-example")
+    assert detail.status_code == 200
+    assert detail.json()["evidence"] is None
+    assert detail.json()["reference_entry"] == "100.5"
+
+
+def test_phase9_endpoint_serves_only_a_persisted_report(tmp_path: Path):
+    report_path = tmp_path / "phase9_report.json"
+    app = create_dashboard_app(tmp_path / "engine.db", ("ETHUSDT",), phase9_report_path=report_path)
+    client = TestClient(app)
+    assert client.get("/api/phase9").json() == {
+        "available": False, "status": "REPORT_UNAVAILABLE", "report": None,
+    }
+    report_path.write_text('{"status":"INCOMPLETE_VALIDATION_ORCHESTRATION","walk_forward":{"oos_trade_count":0}}', encoding="utf-8")
+    response = client.get("/api/phase9")
+    assert response.status_code == 200
+    assert response.json()["available"] is True
+    assert response.json()["report"]["walk_forward"]["oos_trade_count"] == 0
+
 
 def test_notifications_endpoint_returns_delivery_attempts_for_a_signal(tmp_path: Path):
     database_path = tmp_path / "engine.db"
