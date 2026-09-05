@@ -8,6 +8,9 @@ symbols:
   BNBUSDT:
     enabled: false
 
+  XRPUSDT:
+    enabled: false
+
 timeframes:
   primary: 15m
   confirmation: [1h, 4h]
@@ -19,6 +22,11 @@ market:
 data:
   historical_candle_limit: 500
   database_path: data/signal_engine.db
+
+historical:
+  symbols: [ETHUSDT, BTCUSDT, SOLUSDT, BNBUSDT, XRPUSDT]
+  years: 3
+  timeframes: [15m, 1h, 4h]
 
 websocket:
   reconnect_enabled: true

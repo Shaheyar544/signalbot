@@ -106,6 +106,13 @@ class ExitPolicySettings:
 
 
 @dataclass(frozen=True)
+class HistoricalDataSettings:
+    symbols: tuple[str, ...] = ("ETHUSDT", "BTCUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT")
+    years: int = 3
+    timeframes: tuple[str, ...] = ("15m", "1h", "4h")
+
+
+@dataclass(frozen=True)
 class Settings:
     symbols: dict[str, bool]
     invalid_symbols: tuple[str, ...]
@@ -122,6 +129,7 @@ class Settings:
     risk: RiskSettings
     cost: CostSettings
     exit_policy: ExitPolicySettings
+    historical: HistoricalDataSettings
 
     @property
     def enabled_symbols(self) -> tuple[str, ...]:
@@ -242,6 +250,15 @@ def load_settings(path: str | Path = "config.yaml") -> Settings:
     if time_stop is not None and time_stop <= 0:
         raise ValueError("exit_policy time_stop_bars must be positive when set")
     breakeven_offset = Decimal(str(exit_policy.get("breakeven_offset_r", "0.1")))
+    historical_raw = raw.get("historical", {})
+    historical_symbols = tuple(normalize_symbol(str(item)) for item in historical_raw.get(
+        "symbols", ["ETHUSDT", "BTCUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]))
+    historical_years = int(historical_raw.get("years", 3))
+    if historical_years <= 0:
+        raise ValueError("historical years must be positive")
+    historical_timeframes = tuple(_require_timeframe(str(item)) for item in historical_raw.get("timeframes", ["15m", "1h", "4h"]))
+    if not historical_timeframes or len(set(historical_timeframes)) != len(historical_timeframes):
+        raise ValueError("historical timeframes must be non-empty and unique")
     return Settings(
         symbols=symbols,
         invalid_symbols=tuple(invalid_symbols),
@@ -262,4 +279,5 @@ def load_settings(path: str | Path = "config.yaml") -> Settings:
         risk=RiskSettings(stop_buffer),
         cost=CostSettings(entry_order_type=entry_order_type, exit_order_type=exit_order_type, **cost_values),
         exit_policy=ExitPolicySettings(policy_name, legs, move_stop, breakeven_offset, time_stop),
+        historical=HistoricalDataSettings(historical_symbols, historical_years, historical_timeframes),
     )

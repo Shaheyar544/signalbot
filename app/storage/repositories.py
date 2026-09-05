@@ -9,7 +9,7 @@ from app.notifications.base import DeliveryResult
 from app.storage.database import Database
 from app.backtests import BacktestRun, TradeAudit, BacktestStatus
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
     from app.strategy.csd_strategy import SetupAssessment
@@ -34,6 +34,38 @@ class CandleRepository:
              str(candle.open), str(candle.high), str(candle.low), str(candle.close), str(candle.volume), int(candle.is_closed)),
         )
         connection.commit()
+
+    def upsert_many(self, candles: Sequence[Candle]) -> None:
+        connection = self.database.connection
+        if connection is None:
+            raise RuntimeError("Database is not open")
+        if not candles:
+            return
+        values = [(c.symbol, c.timeframe, c.open_time.isoformat(), c.close_time.isoformat(),
+                   str(c.open), str(c.high), str(c.low), str(c.close), str(c.volume), int(c.is_closed))
+                  for c in candles]
+        connection.executemany(
+            """INSERT INTO candles (symbol,timeframe,open_time,close_time,open,high,low,close,volume,is_closed)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(symbol,timeframe,open_time) DO UPDATE SET
+              close_time=excluded.close_time, open=excluded.open, high=excluded.high,
+              low=excluded.low, close=excluded.close, volume=excluded.volume, is_closed=excluded.is_closed""",
+            values,
+        )
+        connection.commit()
+
+    def load_range(self, symbol: str, timeframe: str, start: datetime, end: datetime) -> list[Candle]:
+        connection = self.database.connection
+        if connection is None:
+            raise RuntimeError("Database is not open")
+        rows = connection.execute(
+            """SELECT symbol,timeframe,open_time,close_time,open,high,low,close,volume,is_closed
+               FROM candles WHERE symbol=? AND timeframe=? AND open_time>=? AND open_time<?
+               ORDER BY open_time""",
+            (symbol, timeframe, start.isoformat(), end.isoformat()),
+        ).fetchall()
+        return [Candle(row[0], row[1], datetime.fromisoformat(row[2]), datetime.fromisoformat(row[3]),
+                        *(Decimal(value) for value in row[4:9]), bool(row[9])) for row in rows]
 
 
 class SignalRepository:
