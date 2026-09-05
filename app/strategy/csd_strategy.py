@@ -121,7 +121,12 @@ class CSDStrategyEngine:
                     if inspect.isawaitable(result):
                         await result
                 if assessment.score.classification in {SignalClassification.GOOD_SIGNAL, SignalClassification.STRONG_SIGNAL}:
-                    analysis = self.risk.calculate(assessment, self.latest_structure.get(key, []))
+                    try:
+                        analysis = self.risk.calculate(assessment, self.latest_structure.get(key, []))
+                    except ValueError as error:
+                        # A malformed/degenerate setup is not a trade; keep replay alive and auditable.
+                        LOGGER.warning("Skipping invalid risk plan for %s %s: %s", event.symbol, event.timeframe, error)
+                        return None
                     self.latest_risk_analysis[key] = analysis
                     if self.on_risk_analysis is not None:
                         result = self.on_risk_analysis(analysis)

@@ -14,6 +14,8 @@ import uvicorn
 from app.config.settings import SUPPORTED_TIMEFRAMES, load_settings, normalize_symbol
 from app.monitoring.runtime import RuntimeHealthSnapshotStore
 from app.storage.database import Database
+from app.storage.repositories import BacktestRepository
+from app.backtest.report import HistoricalPerformanceReport
 
 
 def _open_connection(database_path: Path) -> sqlite3.Connection:
@@ -129,6 +131,41 @@ def create_dashboard_app(
             connection.close()
         fields = ("provider", "success", "attempts", "error")
         return {"notifications": [dict(zip(fields, (row[0], bool(row[1]), row[2], row[3]))) for row in rows]}
+
+    @app.get("/api/backtests")
+    def backtests() -> dict[str, Any]:
+        connection = _open_connection(path)
+        try:
+            rows = connection.execute("SELECT run_id,symbol,timeframe,status,warnings,created_at FROM backtest_runs ORDER BY created_at DESC").fetchall()
+        finally:
+            connection.close()
+        fields = ("run_id", "symbol", "timeframe", "status", "warnings", "created_at")
+        return {"backtests": [dict(zip(fields, (row[0], row[1], row[2], row[3], __import__('json').loads(row[4]), row[5]))) for row in rows]}
+
+    @app.get("/api/backtests/{run_id}")
+    def backtest_detail(run_id: str) -> dict[str, Any]:
+        database = Database(path); database.open()
+        try:
+            repository = BacktestRepository(database)
+            if repository.get_run(run_id) is None:
+                raise HTTPException(status_code=404, detail="Backtest not found")
+            report = HistoricalPerformanceReport(repository).run(run_id)
+            trades = repository.list_trades(run_id)
+            report["trades"] = [{"trade_id": trade.trade_id, "signal_time": trade.signal_time.isoformat(),
+                                 "direction": trade.direction, "entry_price": str(trade.entry_price) if trade.entry_price is not None else None,
+                                 "stop_loss": str(trade.stop_loss) if trade.stop_loss is not None else None,
+                                 "take_profit_1": str(trade.take_profit_1) if trade.take_profit_1 is not None else None,
+                                 "take_profit_2": str(trade.take_profit_2) if trade.take_profit_2 is not None else None,
+                                 "take_profit_3": str(trade.take_profit_3) if trade.take_profit_3 is not None else None,
+                                 "score_total": str(trade.score_total), "score_classification": trade.score_classification,
+                                 "exit_time": trade.exit_time.isoformat() if trade.exit_time else None,
+                                 "exit_reason": trade.exit_reason, "gross_r": str(trade.gross_r) if trade.gross_r is not None else None,
+                                 "costs_r": str(trade.costs_r) if trade.costs_r is not None else None,
+                                 "net_r": str(trade.net_r) if trade.net_r is not None else None,
+                                 "resolution_method": trade.resolution_method, "ambiguous_intrabar": trade.ambiguous_intrabar} for trade in trades]
+            return report
+        finally:
+            database.close()
 
     return app
 

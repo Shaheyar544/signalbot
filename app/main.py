@@ -4,6 +4,9 @@ import argparse
 import asyncio
 import logging
 import signal
+import json
+import os
+from app.backtest.gate import GoLiveGateSettings, evaluate_gate
 
 from app.config.settings import load_settings
 from app.data.binance_rest import BinanceRestClient
@@ -28,8 +31,24 @@ async def validate_enabled_symbols(rest: BinanceRestClient, symbols: tuple[str, 
     return tuple(valid)
 
 
-async def run(config_path: str) -> None:
+async def run(config_path: str, *, force_live: bool = False, acknowledge_risk: bool = False) -> None:
     settings = load_settings(config_path)
+    if force_live and not acknowledge_risk:
+        raise ValueError("--force-live requires --acknowledge-risk")
+    observation_mode = True
+    report_path = os.getenv("VALIDATION_REPORT_PATH", str(settings.database_path.with_name("validation_report.json")))
+    try:
+        with open(report_path, encoding="utf-8") as handle:
+            validation_report = json.load(handle)
+        gate = evaluate_gate(validation_report, GoLiveGateSettings(**(settings.go_live_gate or {})))
+        observation_mode = not gate.passed
+        if gate.failures:
+            logging.warning("Go-live gate failed; observation mode: %s", "; ".join(gate.failures))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+        logging.warning("No valid validation report; observation mode: %s", error)
+    if force_live:
+        observation_mode = False
+        logging.warning("--force-live acknowledged; bypassing go-live gate")
     logging.info("Starting Multi-Pair CSD Signal Engine")
     database = Database(settings.database_path)
     database.open()
@@ -54,7 +73,8 @@ async def run(config_path: str) -> None:
             logging.info("Persisted signal analysis for %s %s", analysis.symbol, analysis.timeframe)
             record = signals.get(build_signal_id(assessment))
             if record is not None:
-                await notification_dispatcher.dispatch(record)
+                if not observation_mode:
+                    await notification_dispatcher.dispatch(record)
         else:
             logging.info("Duplicate signal analysis ignored for %s %s", analysis.symbol, analysis.timeframe)
 
@@ -128,9 +148,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Multi-Pair CSD Signal Engine (market data and signal analysis)")
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--log-level", default="INFO")
+    parser.add_argument("--force-live", action="store_true")
+    parser.add_argument("--acknowledge-risk", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    asyncio.run(run(args.config))
+    asyncio.run(run(args.config, force_live=args.force_live, acknowledge_risk=args.acknowledge_risk))
 
 
 if __name__ == "__main__":

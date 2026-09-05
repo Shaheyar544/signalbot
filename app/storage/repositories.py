@@ -136,3 +136,19 @@ class BacktestRepository:
              score_total,score_classification,exit_time,exit_reason,gross_r,costs_r,net_r,resolution_method,ambiguous_intrabar)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", values)
         connection.commit()
+
+    def list_runs(self) -> list[BacktestRun]:
+        connection = self.database.connection
+        if connection is None: raise RuntimeError("Database is not open")
+        rows = connection.execute("SELECT run_id,symbol,timeframe,status,warnings,created_at FROM backtest_runs ORDER BY created_at DESC").fetchall()
+        return [BacktestRun(row[0], row[1], row[2], BacktestStatus(row[3]), tuple(json.loads(row[4])), datetime.fromisoformat(row[5])) for row in rows]
+
+    def get_run(self, run_id: str) -> BacktestRun | None:
+        return next((run for run in self.list_runs() if run.run_id == run_id), None)
+
+    def list_trades(self, run_id: str) -> list[TradeAudit]:
+        connection = self.database.connection
+        if connection is None: raise RuntimeError("Database is not open")
+        rows = connection.execute("""SELECT trade_id,run_id,signal_time,direction,entry_price,stop_loss,take_profit_1,take_profit_2,take_profit_3,score_total,score_classification,exit_time,exit_reason,gross_r,costs_r,net_r,resolution_method,ambiguous_intrabar FROM backtest_trades WHERE run_id=? ORDER BY signal_time""", (run_id,)).fetchall()
+        def decimal(value): return Decimal(value) if value is not None else None
+        return [TradeAudit(row[0], row[1], datetime.fromisoformat(row[2]), row[3], decimal(row[4]), decimal(row[5]), decimal(row[6]), decimal(row[7]), decimal(row[8]), Decimal(row[9]), row[10], datetime.fromisoformat(row[11]) if row[11] else None, row[12], decimal(row[13]), decimal(row[14]), decimal(row[15]), row[16], bool(row[17])) for row in rows]

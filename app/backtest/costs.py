@@ -32,8 +32,10 @@ class CostModel:
         return fee + slippage
 
     def funding_r(self, *, opened_at: datetime, closed_at: datetime, risk_unit_percent: Decimal) -> Decimal:
-        if closed_at <= opened_at or risk_unit_percent <= 0:
+        if closed_at <= opened_at or risk_unit_percent <= 0 or self.settings.funding_rate_source == "none":
             return Decimal(0)
+        if self.settings.funding_rate_source == "historical":
+            raise ValueError("historical funding source is not configured for V2")
         boundaries = int((closed_at - opened_at) / timedelta(hours=8))
         # TODO: replace with historical funding rate lookup per symbol.
         return Decimal(boundaries) * self.settings.funding_rate_fixed_percent / risk_unit_percent

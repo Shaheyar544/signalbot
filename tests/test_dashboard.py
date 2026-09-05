@@ -125,3 +125,18 @@ def test_notifications_endpoint_returns_delivery_attempts_for_a_signal(tmp_path:
     assert response.json()["notifications"] == [{
         "provider": "discord", "success": False, "attempts": 3, "error": "connection refused",
     }]
+
+
+def test_backtests_endpoint_exposes_persisted_runs_and_details(tmp_path: Path):
+    database_path = tmp_path / "engine.db"
+    database = Database(database_path); database.open()
+    database.connection.execute(
+        "INSERT INTO backtest_runs VALUES (?,?,?,?,?,?)",
+        ("run-1", "ETHUSDT", "15m", "DIAGNOSTIC", "[\"diagnostic\"]", "2026-01-01T00:00:00+00:00"),
+    )
+    database.connection.commit(); database.close()
+    client = TestClient(create_dashboard_app(database_path, ("ETHUSDT",)))
+    assert client.get("/api/backtests").json()["backtests"][0]["run_id"] == "run-1"
+    detail = client.get("/api/backtests/run-1")
+    assert detail.status_code == 200
+    assert detail.json()["status"] == "DIAGNOSTIC"

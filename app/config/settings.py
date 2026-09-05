@@ -84,6 +84,7 @@ class CostSettings:
     slippage_percent: Decimal = Decimal("0.02")
     slippage_percent_stop: Decimal = Decimal("0.05")
     funding_rate_fixed_percent: Decimal = Decimal("0.01")
+    funding_rate_source: str = "fixed"
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,7 @@ class ExitPolicySettings:
     move_stop_to_breakeven_after_leg: int | None = 1
     breakeven_offset_r: Decimal = Decimal("0.1")
     time_stop_bars: int | None = 48
+    intrabar_fill_assumption: str = "pessimistic"
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,15 @@ class HistoricalDataSettings:
     symbols: tuple[str, ...] = ("ETHUSDT", "BTCUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT")
     years: int = 3
     timeframes: tuple[str, ...] = ("15m", "1h", "4h")
+
+
+@dataclass(frozen=True)
+class VariantSettings:
+    entry_mode: str = "retest"
+    require_htf_agreement: bool = False
+    regime_filter: str = "none"
+    regime_min_atr_percentile: int = 40
+    session_filter: str = "none"
 
 
 @dataclass(frozen=True)
@@ -130,6 +141,8 @@ class Settings:
     cost: CostSettings
     exit_policy: ExitPolicySettings
     historical: HistoricalDataSettings
+    variants: VariantSettings = VariantSettings()
+    go_live_gate: dict[str, Any] | None = None
 
     @property
     def enabled_symbols(self) -> tuple[str, ...]:
@@ -227,10 +240,13 @@ def load_settings(path: str | Path = "config.yaml") -> Settings:
     exit_order_type = str(cost.get("exit_order_type", "taker")).lower()
     if entry_order_type not in {"taker", "maker"} or exit_order_type not in {"taker", "maker"}:
         raise ValueError("cost entry_order_type and exit_order_type must be 'taker' or 'maker'")
+    funding_source = str(cost.get("funding_rate_source", "fixed")).lower()
+    if funding_source not in {"historical", "fixed", "none"}:
+        raise ValueError("funding_rate_source must be historical, fixed, or none")
     exit_policy = raw.get("exit_policy", {})
     policy_name = str(exit_policy.get("name", "scaled"))
-    if policy_name not in {"single_target", "scaled"}:
-        raise ValueError("exit_policy name must be 'single_target' or 'scaled'")
+    if policy_name not in {"single_target", "scaled", "trailing"}:
+        raise ValueError("exit_policy name must be single_target, scaled, or trailing")
     raw_legs = exit_policy.get("legs", [
         {"target_r": "1.0", "size_percent": "50"},
         {"target_r": "2.0", "size_percent": "25"},
@@ -250,6 +266,9 @@ def load_settings(path: str | Path = "config.yaml") -> Settings:
     if time_stop is not None and time_stop <= 0:
         raise ValueError("exit_policy time_stop_bars must be positive when set")
     breakeven_offset = Decimal(str(exit_policy.get("breakeven_offset_r", "0.1")))
+    intrabar_assumption = str(exit_policy.get("intrabar_fill_assumption", "pessimistic")).lower()
+    if intrabar_assumption != "pessimistic":
+        raise ValueError("V2 replay requires pessimistic intrabar_fill_assumption")
     historical_raw = raw.get("historical", {})
     historical_symbols = tuple(normalize_symbol(str(item)) for item in historical_raw.get(
         "symbols", ["ETHUSDT", "BTCUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]))
@@ -277,7 +296,15 @@ def load_settings(path: str | Path = "config.yaml") -> Settings:
         confirmation=ConfirmationSettings(bullish_rsi, bearish_rsi, volume_ratio),
         scoring=ScoringSettings(**scoring_values),
         risk=RiskSettings(stop_buffer),
-        cost=CostSettings(entry_order_type=entry_order_type, exit_order_type=exit_order_type, **cost_values),
-        exit_policy=ExitPolicySettings(policy_name, legs, move_stop, breakeven_offset, time_stop),
+        cost=CostSettings(entry_order_type=entry_order_type, exit_order_type=exit_order_type, funding_rate_source=funding_source, **cost_values),
+        exit_policy=ExitPolicySettings(policy_name, legs, move_stop, breakeven_offset, time_stop, intrabar_assumption),
         historical=HistoricalDataSettings(historical_symbols, historical_years, historical_timeframes),
+        variants=VariantSettings(
+            entry_mode=str(raw.get("variants", {}).get("entry_mode", "retest")),
+            require_htf_agreement=bool(raw.get("variants", {}).get("require_htf_agreement", False)),
+            regime_filter=str(raw.get("variants", {}).get("regime_filter", "none")),
+            regime_min_atr_percentile=int(raw.get("variants", {}).get("regime_min_atr_percentile", 40)),
+            session_filter=str(raw.get("variants", {}).get("session_filter", "none")),
+        ),
+        go_live_gate=raw.get("go_live_gate"),
     )

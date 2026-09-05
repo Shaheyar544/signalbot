@@ -60,6 +60,7 @@ cost:
   slippage_percent: 0.02
   slippage_percent_stop: 0.05
   funding_rate_fixed_percent: 0.01
+  funding_rate_source: fixed
 
 exit_policy:
   name: scaled
@@ -73,3 +74,20 @@ exit_policy:
   move_stop_to_breakeven_after_leg: 1
   breakeven_offset_r: 0.1
   time_stop_bars: 48
+  intrabar_fill_assumption: pessimistic
+
+variants:
+  entry_mode: retest
+  require_htf_agreement: false
+  regime_filter: none
+  regime_min_atr_percentile: 40
+  session_filter: none
+
+go_live_gate:
+  min_out_of_sample_trades: 100
+  min_net_expectancy_r: 0.10
+  max_in_sample_out_sample_ratio: 2.0
+  min_baseline_percentile: 95
+  max_drawdown_r: 20
+  require_positive_in_symbols: 3
+  report_max_age_days: 30
