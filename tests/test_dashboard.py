@@ -37,6 +37,8 @@ def test_dashboard_includes_read_only_lightweight_chart_controls(tmp_path: Path)
     assert "CandlestickSeries" in response.text
     assert "HistogramSeries" in response.text
     assert "TradingView" in response.text
+    assert "chartSymbolIsEnabled" in response.text
+    assert "is not enabled by the backend" in response.text
     for symbol in ("ETHUSDT", "BTCUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"):
         assert symbol in response.text
     for timeframe in ("15m", "1h", "4h"):
