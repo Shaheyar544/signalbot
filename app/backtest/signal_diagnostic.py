@@ -13,6 +13,7 @@ from app.backtest.phase9 import CanonicalTradeSimulator, collect_strategy_plans
 from app.backtest.research_checkpoints import jsonable
 from app.config.settings import Settings
 from app.events.models import Candle
+from app.strategy.scoring import frozen_v1_score_semantics
 
 
 async def seven_day_signal_report(settings: Settings, candles: Sequence[Candle], *, start: datetime, end: datetime) -> dict[str, Any]:
@@ -50,7 +51,8 @@ async def seven_day_signal_report(settings: Settings, candles: Sequence[Candle],
         "signals": rows, "timeline": [{key: row[key] for key in ("timestamp", "classification", "direction", "score", "entry_range", "stop", "tp1", "tp2", "tp3", "outcome")} for row in rows],
         "performance": {**asdict(metrics), "statistical_status": "INSUFFICIENT_SAMPLE_FOR_STATISTICAL_CONCLUSION" if metrics.trade_count < 30 else "DIAGNOSTIC_ONLY_NOT_STATISTICAL_PROOF"},
         "methodology": {"canonical_strategy_engine": True, "canonical_cost_model": True, "canonical_exit_engine": True,
-                        "forming_candles_excluded": True, "test_window_days": 7},
+                        "forming_candles_excluded": True, "test_window_days": 7,
+                        "frozen_v1_score_semantics": frozen_v1_score_semantics()},
     }
 
 

@@ -137,7 +137,10 @@ class ExitPolicyEngine:
     @staticmethod
     def _close_at_stop(trade: SimulatedTrade, candle: Candle, method: str) -> None:
         trade.state = TradeState.CLOSED
-        trade.exit_reason = "SL"
+        # The stop can have moved after partial target fills.  Preserve that
+        # distinction so an overall profitable scaled trade is not reported as
+        # a plain initial-stop loss.
+        trade.exit_reason = "STOP_AFTER_PARTIAL_TP" if any(leg.filled for leg in trade.legs) else "SL"
         trade.resolution_method = method
         trade.exit_price = trade.current_stop
         trade.closed_at = candle.close_time
@@ -155,3 +158,8 @@ def gross_r(trade: SimulatedTrade) -> Decimal:
     close_r = ((trade.exit_price - trade.entry_fill_price) / risk if trade.direction is CSDDirection.BULLISH
                else (trade.entry_fill_price - trade.exit_price) / risk)
     return filled_r + close_r * trade.remaining_size_percent / Decimal(100)
+
+
+def is_stop_exit_reason(reason: str | None) -> bool:
+    """Whether stop-exit slippage applies, including protective stops after TPs."""
+    return reason in {"SL", "STOP_AFTER_PARTIAL_TP"}

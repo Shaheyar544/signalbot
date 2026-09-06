@@ -2,6 +2,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+import subprocess
 
 from fastapi.testclient import TestClient
 
@@ -105,7 +106,7 @@ def test_manual_analysis_endpoint_reports_no_closed_candles_without_persisting_a
         "read_only": True, "analyzed_candle_time": None, "classification": None,
         "confidence": None, "direction": None, "evidence": None, "reference_plan": None,
     }
-    assert client.get("/api/signals").json() == {"signals": []}
+    assert client.get("/api/signals").json() == {"symbol": None, "signals": []}
 
 
 def test_manual_analysis_reuses_strategy_for_a_retest_watch_without_persisting(tmp_path: Path, make_candle):
@@ -129,7 +130,7 @@ def test_manual_analysis_reuses_strategy_for_a_retest_watch_without_persisting(t
     assert response.json()["direction"] == "BULLISH"
     assert response.json()["evidence"]["retest"]["status"] == "RETEST_DETECTED"
     assert response.json()["reference_plan"] is None
-    assert client.get("/api/signals").json() == {"signals": []}
+    assert client.get("/api/signals").json() == {"symbol": None, "signals": []}
 
 
 def test_status_endpoint_includes_the_engine_runtime_snapshot(tmp_path: Path):
@@ -206,18 +207,106 @@ def test_signals_endpoint_returns_persisted_analysis_records(tmp_path: Path):
     response = TestClient(app).get("/api/signals?symbol=ETHUSDT&limit=10")
 
     assert response.status_code == 200
-    assert response.json()["signals"] == [{
+    assert response.json() == {"symbol": "ETHUSDT", "signals": [{
         "signal_id": "ETHUSDT-15m-BULLISH-example", "symbol": "ETHUSDT", "timeframe": "15m",
         "direction": "BULLISH", "classification": "STRONG_SIGNAL", "confidence": "9",
         "entry_low": "100", "entry_high": "101", "reference_entry": "100.5", "stop_loss": "99",
         "take_profit_1": "102", "take_profit_2": "104", "take_profit_3": "106",
         "take_profit_4": None, "created_at": "2026-01-01T00:15:00+00:00",
-    }]
-
+    }]}
     detail = TestClient(app).get("/api/signals/ETHUSDT-15m-BULLISH-example")
     assert detail.status_code == 200
     assert detail.json()["evidence"] is None
     assert detail.json()["reference_entry"] == "100.5"
+
+
+def test_symbol_scoped_signal_api_never_returns_another_symbol(tmp_path: Path):
+    database_path = tmp_path / "engine.db"
+    database = Database(database_path); database.open()
+    assert database.connection is not None
+    symbols = ("ETHUSDT", "BTCUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT")
+    for symbol, price in zip(symbols, ("100", "1000", "10", "500", "1"), strict=True):
+        database.connection.execute(
+            """INSERT INTO signals (signal_id,symbol,timeframe,direction,classification,confidence,entry_low,entry_high,reference_entry,stop_loss,take_profit_1,take_profit_2,take_profit_3,take_profit_4,created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (f"{symbol}-signal", symbol, "15m", "BULLISH", "GOOD_SIGNAL", "5.8", price, price, price, price, price, price, price, None, "2026-01-01T00:15:00+00:00"),
+        )
+    database.connection.commit(); database.close()
+    client = TestClient(create_dashboard_app(database_path, symbols))
+    for symbol in symbols:
+        payload = client.get(f"/api/signals?symbol={symbol}").json()
+        assert payload["symbol"] == symbol
+        assert all(item["symbol"] == symbol for item in payload["signals"])
+
+
+def test_dashboard_rejects_mismatched_primary_signal_and_formats_score(tmp_path: Path):
+    response = TestClient(create_dashboard_app(tmp_path / "engine.db", ("ETHUSDT",))).get("/")
+    assert "DATA INTEGRITY ERROR" in response.text
+    assert "scoreDisplay" in response.text
+    assert "HISTORICAL / PERSISTED" in response.text
+
+
+def test_dashboard_source_uses_selected_market_and_request_ids_for_state_isolation(tmp_path: Path):
+    source = TestClient(create_dashboard_app(tmp_path / "engine.db", ("ETHUSDT", "XRPUSDT"))).get("/").text
+
+    assert "function selectedPersistedSignal()" in source
+    assert "signal.symbol===market.symbol" in source
+    assert "String(signal.timeframe).toLowerCase()===market.timeframe" in source
+    assert "requestId!==state.manual.requestId" in source
+    assert "requestId!==state.loadRequestId" in source
+    assert "state.chart.cache" in source
+    assert "DATA INTEGRITY ERROR" in source
+
+
+def test_dashboard_clearly_separates_live_active_and_persisted_signal_states(tmp_path: Path):
+    source = TestClient(create_dashboard_app(tmp_path / "engine.db", ("ETHUSDT",))).get("/").text
+
+    assert "LIVE ANALYSIS" in source
+    assert "ACTIVE SIGNAL" in source
+    assert "LAST PERSISTED SIGNAL" in source
+    assert "HISTORICAL / PERSISTED" in source
+
+
+def test_dashboard_frontend_rejects_cross_symbol_signal_and_formats_score():
+    """Exercise the selection helpers in the emitted JavaScript without a browser dependency."""
+    node_program = r'''
+const assert = require('assert');
+const fs = require('fs');
+const vm = require('vm');
+const source = fs.readFileSync('app/dashboard.py', 'utf8');
+const match = source.match(/<script>([\s\S]*?)<\/script>/);
+if (!match) throw new Error('Dashboard script was not found');
+const element = {innerHTML:'', textContent:'', setAttribute(){}, removeAttribute(){}, after(){}, appendChild(){}, closest(){return null}};
+const sandbox = {
+  console, Date, Map, JSON, Math, Number, String, Object, Array, Promise,
+  document:{querySelector(){return element}, querySelectorAll(){return []}, addEventListener(){}, createElement(){return element}},
+  window:{addEventListener(){}, EventSource:null}, location:{hash:''},
+  requestAnimationFrame(){}, queueMicrotask(){}, setInterval(){return 0}, clearTimeout(){}, setTimeout(){return 0},
+  fetch:async()=>({ok:true,status:200,statusText:'OK',json:async()=>({signals:[],enabled_symbols:[]})}),
+  ResizeObserver:class {observe(){} disconnect(){}}, EventSource:null,
+};
+sandbox.window.EventSource = sandbox.EventSource;
+vm.createContext(sandbox);
+vm.runInContext(match[1] + ';globalThis.__dashboardHooks={state,selectedPersistedSignal,signalCard,scoreDisplay};', sandbox);
+const hooks = sandbox.__dashboardHooks;
+hooks.state.chart.symbol = 'ETHUSDT'; hooks.state.chart.timeframe = '15m';
+const xrp = {symbol:'XRPUSDT',timeframe:'15m',confidence:'5.81400637077199',classification:'GOOD_SIGNAL'};
+hooks.state.signals = [xrp];
+assert.strictEqual(hooks.selectedPersistedSignal(), null);
+assert.ok(hooks.signalCard(xrp, {}, 'ETHUSDT', '15m').includes('DATA INTEGRITY ERROR'));
+const eth = {...xrp, symbol:'ETHUSDT'};
+hooks.state.signals = [xrp, eth];
+assert.strictEqual(hooks.selectedPersistedSignal().symbol, 'ETHUSDT');
+assert.strictEqual(hooks.scoreDisplay(xrp.confidence), '6');
+hooks.state.chart.cache.set('ETHUSDT:15m', [{symbol:'ETHUSDT'}]);
+hooks.state.chart.cache.set('XRPUSDT:15m', [{symbol:'XRPUSDT'}]);
+assert.notStrictEqual(hooks.state.chart.cache.get('ETHUSDT:15m'), hooks.state.chart.cache.get('XRPUSDT:15m'));
+'''
+    result = subprocess.run(
+        ["node", "-e", node_program], check=False, capture_output=True, text=True, cwd=Path.cwd(),
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_phase9_endpoint_serves_only_a_persisted_report(tmp_path: Path):

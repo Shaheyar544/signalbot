@@ -8,7 +8,7 @@ from typing import Any, Callable, Sequence
 from bisect import bisect_right
 
 from app.backtest.costs import CostModel
-from app.backtest.exits import ExitPolicyEngine, TradeState, gross_r
+from app.backtest.exits import ExitPolicyEngine, TradeState, gross_r, is_stop_exit_reason
 from app.backtest.metrics import calculate_metrics
 from app.backtests import TradeAudit
 from app.config.settings import Settings
@@ -216,7 +216,7 @@ class CanonicalTradeSimulator:
             return None
         costs = self.cost_model.breakdown(direction=trade.direction, entry=trade.entry_fill_price,
                                           stop_loss=trade.initial_stop_loss, exit_price=trade.exit_price,
-                                          is_stop_exit=trade.exit_reason == "SL", opened_at=trade.entered_at,
+                                          is_stop_exit=is_stop_exit_reason(trade.exit_reason), opened_at=trade.entered_at,
                                           closed_at=trade.closed_at)
         gross = gross_r(trade)
         targets = plan.analysis.take_profits

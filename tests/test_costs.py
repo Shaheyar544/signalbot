@@ -41,3 +41,17 @@ def test_breakdown_total_equals_all_cost_components_without_double_counting():
     )
     assert breakdown.entry_fee_r == Decimal("0.05")
     assert breakdown.entry_slippage_r == Decimal("0.02")
+
+
+def test_notional_costs_have_larger_r_equivalent_for_tight_stops():
+    opened = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    model = _model(funding_rate_source="none")
+    normal = model.breakdown(direction=CSDDirection.BULLISH, entry=Decimal("100"), stop_loss=Decimal("99"),
+                             exit_price=Decimal("101"), is_stop_exit=False, opened_at=opened, closed_at=opened)
+    tight = model.breakdown(direction=CSDDirection.BULLISH, entry=Decimal("100"), stop_loss=Decimal("99.9"),
+                            exit_price=Decimal("101"), is_stop_exit=False, opened_at=opened, closed_at=opened)
+    # Both use the same 0.14% notional entry+exit fee/slippage assumption.
+    assert model.risk_unit_percent(Decimal("100"), Decimal("99")) == Decimal("1")
+    assert model.risk_unit_percent(Decimal("100"), Decimal("99.9")) == Decimal("0.1")
+    assert normal.total_r == Decimal("0.14")
+    assert tight.total_r == Decimal("1.4")

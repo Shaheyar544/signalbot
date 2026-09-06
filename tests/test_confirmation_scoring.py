@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from app.indicators.engine import IndicatorValues, MacdValues
 from app.strategy.confirmation import ConfirmationEngine, ConfirmationResult
-from app.strategy.scoring import ScoringEngine, SignalClassification
+from app.strategy.scoring import ScoringEngine, SignalClassification, frozen_v1_score_semantics
 from app.structure.csd import CSDDirection
 
 
@@ -65,3 +65,11 @@ def test_scoring_boundaries_make_every_classification_reachable():
         Decimal("1"), Decimal("0"), Decimal("0"), Decimal("0"), Decimal("1"),
     )
     assert engine.score(strong_confirmation, csd_quality=Decimal("1"), breakout_quality=Decimal("1"), retest_quality=Decimal("1")).classification is SignalClassification.STRONG_SIGNAL
+
+
+def test_frozen_v1_score_semantics_match_executable_classification_thresholds():
+    semantics = frozen_v1_score_semantics()
+    assert semantics["bands"]["WATCH"]["minimum_inclusive"] == Decimal("3.0")
+    assert semantics["bands"]["GOOD_SIGNAL"]["minimum_inclusive"] == Decimal("5.0")
+    assert semantics["bands"]["STRONG_SIGNAL"]["minimum_inclusive"] == Decimal("7.5")
+    assert tuple(semantics["eligible_classifications"]) == (SignalClassification.GOOD_SIGNAL, SignalClassification.STRONG_SIGNAL)

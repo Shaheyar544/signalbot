@@ -19,6 +19,13 @@ class CostBreakdown:
 
 
 class CostModel:
+    """Notional percentage costs expressed in units of initial stop risk.
+
+    A 0.05% fee is charged on notional, while R is defined by the distance from
+    entry to initial stop.  Therefore the R-equivalent is ``0.05 / risk%``:
+    tight stops legitimately yield large cost-R values.  This is accounting,
+    not a cap or a strategy adjustment.
+    """
     def __init__(self, settings: CostSettings) -> None:
         self.settings = settings
 
@@ -58,3 +65,11 @@ class CostModel:
         funding = self.funding_r(opened_at=opened_at, closed_at=closed_at, risk_unit_percent=risk_unit_percent)
         total = entry_fee_r + exit_fee_r + entry_slippage_r + exit_slippage_r + funding
         return CostBreakdown(entry_fee_r, exit_fee_r, entry_slippage_r, exit_slippage_r, funding, total)
+
+    @staticmethod
+    def risk_unit_percent(entry: Decimal, stop_loss: Decimal) -> Decimal:
+        """Initial-stop risk as a percentage of entry notional."""
+        risk = abs(entry - stop_loss) / entry * Decimal(100)
+        if risk <= 0:
+            raise ValueError("entry and stop_loss must define positive risk")
+        return risk

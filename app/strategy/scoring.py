@@ -8,6 +8,16 @@ from app.strategy.confirmation import ConfirmationResult
 
 
 _MAX_WEIGHTED_TOTAL = Decimal("12")
+# These are the frozen implementation thresholds used for historical replay,
+# live classification, signal eligibility, and all reports.  Earlier prose
+# describing 0–4/5–6/7–8/9–10 bands predates graded V1 scoring and is not the
+# executable V1 contract.
+FROZEN_V1_SCORE_BANDS = {
+    "NO_TRADE": (Decimal("0"), Decimal("3.0")),
+    "WATCH": (Decimal("3.0"), Decimal("5.0")),
+    "GOOD_SIGNAL": (Decimal("5.0"), Decimal("7.5")),
+    "STRONG_SIGNAL": (Decimal("7.5"), Decimal("10")),
+}
 
 
 class SignalClassification(StrEnum):
@@ -39,9 +49,9 @@ class ScoringWeights:
 class ScoringEngine:
     # TODO: recalibrate thresholds from validation report.
     def __init__(self, weights: ScoringWeights | None = None,
-                 threshold_watch: Decimal = Decimal("3.0"),
-                 threshold_good: Decimal = Decimal("5.0"),
-                 threshold_strong: Decimal = Decimal("7.5")) -> None:
+                 threshold_watch: Decimal = FROZEN_V1_SCORE_BANDS["WATCH"][0],
+                 threshold_good: Decimal = FROZEN_V1_SCORE_BANDS["GOOD_SIGNAL"][0],
+                 threshold_strong: Decimal = FROZEN_V1_SCORE_BANDS["STRONG_SIGNAL"][0]) -> None:
         self.weights = weights or ScoringWeights()
         self.threshold_watch = threshold_watch
         self.threshold_good = threshold_good
@@ -68,3 +78,10 @@ class ScoringEngine:
         else:
             classification = SignalClassification.STRONG_SIGNAL
         return ConfidenceScore(total, components, classification)
+
+
+def frozen_v1_score_semantics() -> dict[str, object]:
+    """Machine-readable canonical reporting contract; no strategy tuning."""
+    return {"bands": {name: {"minimum_inclusive": low, "maximum_exclusive": high}
+                      for name, (low, high) in FROZEN_V1_SCORE_BANDS.items()},
+            "eligible_classifications": (SignalClassification.GOOD_SIGNAL, SignalClassification.STRONG_SIGNAL)}

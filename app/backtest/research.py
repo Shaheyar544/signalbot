@@ -207,7 +207,7 @@ def cost_stress_report(trades: Sequence[TradeAudit], settings: Settings) -> dict
                 continue
             breakdown = model.breakdown(direction=CSDDirection(trade.direction), entry=trade.entry_price,
                                         stop_loss=trade.stop_loss, exit_price=trade.exit_price,
-                                        is_stop_exit=trade.exit_reason == "SL", opened_at=trade.entry_time,
+                                        is_stop_exit=trade.exit_reason in {"SL", "STOP_AFTER_PARTIAL_TP"}, opened_at=trade.entry_time,
                                         closed_at=trade.exit_time)
             stressed.append(replace(trade, costs_r=breakdown.total_r, net_r=trade.gross_r - breakdown.total_r))
         status = "INCOMPLETE_DATA" if missing_execution_data else _summary(stressed)["status"]

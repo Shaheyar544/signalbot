@@ -105,3 +105,10 @@ legacy audits missing those fields are reported as `INCOMPLETE_DATA`. Lifecycle
 conversion requires persisted events linked to the same setup/signal entity;
 unlinked or absent lifecycle records are reported as unavailable rather than
 estimated.
+
+Cost assumptions are percentages of trade notional, then expressed as initial
+stop-risk R. Consequently, the same fee/slippage percentage is a larger R cost
+for a tighter stop; reports do not cap or hide that economic effect. Frozen V1
+classification is executable and consistent across live/replay/reporting:
+`NO_TRADE < 3.0`, `WATCH 3.0–<5.0`, `GOOD_SIGNAL 5.0–<7.5`, and
+`STRONG_SIGNAL >= 7.5`; only the latter two are signal-eligible.

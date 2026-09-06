@@ -52,6 +52,17 @@ def test_breakeven_stop_replaces_original_stop_after_first_leg(make_candle):
     assert trade.state is TradeState.OPEN
 
 
+def test_partial_tp_then_protective_stop_keeps_positive_gross_r_and_explicit_reason(make_candle):
+    engine = _engine(); trade = _trade()
+    engine.advance(trade, _candle(make_candle, 1, 100, 101, 101))
+    engine.advance(trade, _candle(make_candle, 2, 100.05, 100.5, 100.2))
+    assert trade.state is TradeState.CLOSED
+    assert trade.exit_reason == "STOP_AFTER_PARTIAL_TP"
+    assert trade.exit_price == Decimal("100.1")
+    # 50% closed at +1R, remaining 50% at protective +0.1R.
+    assert gross_r(trade) == Decimal("0.55")
+
+
 def test_same_candle_stop_and_target_is_pessimistically_resolved_as_stop(make_candle):
     engine = _engine(); trade = _trade()
     engine.advance(trade, _candle(make_candle, 1, 99, 101, 100))

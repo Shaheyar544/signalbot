@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Sequence
 
 from app.backtest.costs import CostModel
-from app.backtest.exits import ExitPolicyEngine, SimulatedTrade, TradeState, gross_r
+from app.backtest.exits import ExitPolicyEngine, SimulatedTrade, TradeState, gross_r, is_stop_exit_reason
 from app.backtests import BacktestRun, BacktestStatus, TradeAudit
 from app.config.settings import Settings
 from app.data.candles import CandleStore
@@ -111,7 +111,7 @@ class HistoricalBacktestRunner:
         assert trade.exit_price is not None and trade.closed_at is not None
         costs = cost_model.breakdown(direction=trade.direction, entry=trade.entry_fill_price,
                                      stop_loss=trade.initial_stop_loss, exit_price=trade.exit_price,
-                                     is_stop_exit=trade.exit_reason == "SL", opened_at=trade.entered_at,
+                                     is_stop_exit=is_stop_exit_reason(trade.exit_reason), opened_at=trade.entered_at,
                                      closed_at=trade.closed_at)
         targets = record.analysis.take_profits
         gross = gross_r(trade)
