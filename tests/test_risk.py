@@ -19,7 +19,7 @@ def _assessment(make_candle, direction=CSDDirection.BULLISH):
     csd = CSDEvent(source.symbol, source.timeframe, direction, source, swing, Decimal("1"))
     setup = BreakoutSetup(source.symbol, source.timeframe, direction, level, Decimal("99.8"), Decimal("100.2"), csd, BreakoutStatus.RETEST_DETECTED)
     retest = RetestEvent(source.symbol, source.timeframe, retest_candle, level, BreakoutStatus.RETEST_DETECTED, setup)
-    confirmation = ConfirmationResult(direction, True, True, True, True, True, True)
+    confirmation = ConfirmationResult(direction, True, True, True, True, {"1h": True, "4h": True})
     return SetupAssessment(retest, confirmation, ConfidenceScore(Decimal("8"), {}, SignalClassification.STRONG_SIGNAL))
 
 

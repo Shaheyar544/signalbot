@@ -2,15 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import Counter
 from decimal import Decimal
 from typing import Iterable
 
 from app.events.models import Candle
-
-
-_TIMEFRAME_DELTA = {"15m": timedelta(minutes=15), "1h": timedelta(hours=1), "4h": timedelta(hours=4)}
+from app.structure.timeframes import duration
 
 
 @dataclass(frozen=True)
@@ -53,15 +51,16 @@ class IntegrityReport:
 
 def check_integrity(symbol: str, timeframe: str, candles: Iterable[Candle]) -> IntegrityReport:
     """Return continuity/duplicate/OHLC diagnostics without mutating input."""
-    if timeframe not in _TIMEFRAME_DELTA:
-        raise ValueError(f"Unsupported timeframe {timeframe!r}")
+    try:
+        expected_delta = duration(timeframe)
+    except ValueError as error:
+        raise ValueError(f"Unsupported timeframe {timeframe!r}") from error
     ordered = sorted(candles, key=lambda candle: candle.open_time)
     if not ordered:
         return IntegrityReport(symbol, timeframe, 0, empty=True)
     counts = Counter(candle.open_time for candle in ordered)
     duplicate_count = sum(count - 1 for count in counts.values() if count > 1)
     gaps: list[IntegrityGap] = []
-    expected_delta = _TIMEFRAME_DELTA[timeframe]
     for previous, current in zip(ordered, ordered[1:]):
         expected = previous.open_time + expected_delta
         if current.open_time > expected:

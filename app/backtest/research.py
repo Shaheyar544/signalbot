@@ -93,14 +93,14 @@ def score_analytics(trades: Sequence[TradeAudit]) -> dict[str, Any]:
         name: _group([trade for trade in trades if getattr(trade, field) is not None], lambda trade, field=field: "TRUE" if getattr(trade, field) else "FALSE")
         for name, field in fields.items()
     }
-    htf_trades = [trade for trade in trades if trade.htf_one_hour is not None and trade.htf_four_hour is not None]
+    htf_trades = [trade for trade in trades if trade.htf_agreement is not None]
     return {
         "band_definition": "floor(score_total), restricted to 5..10",
         "by_score": by_score,
         "by_direction": _group(trades, lambda trade: trade.direction),
         "by_symbol": _group(trades, lambda trade: trade.symbol or "UNKNOWN"),
         "by_regime": _group(trades, lambda trade: trade.regime or "UNAVAILABLE"),
-        "by_htf_agreement": _group(htf_trades, lambda trade: "AGREES" if trade.htf_one_hour and trade.htf_four_hour else "NOT_FULLY_AGREE")
+        "by_htf_agreement": _group(htf_trades, lambda trade: "AGREES" if all(trade.htf_agreement.values()) else "NOT_FULLY_AGREE")
         if htf_trades else {"status": "UNAVAILABLE_NOT_PERSISTED"},
         "by_confirmation_component": component_data if any(component_data.values()) else {"status": "UNAVAILABLE_NOT_PERSISTED"},
     }

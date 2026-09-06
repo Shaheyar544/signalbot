@@ -159,6 +159,7 @@ async def collect_strategy_plans(settings: Settings, candles: Sequence[Candle]) 
         rsi_bearish_maximum=settings.confirmation.rsi_bearish_maximum,
         stop_buffer_percent=settings.risk.stop_buffer_percent, scoring_settings=settings.scoring,
         entry_mode=settings.variants.entry_mode,
+        confirmation_timeframes=settings.confirmation_timeframes,
         on_assessment=capture_assessment, on_risk_analysis=capture_analysis,
     )
     for candle in ordered:
@@ -227,7 +228,7 @@ class CanonicalTradeSimulator:
                           trade.exit_reason, gross, costs.total_r, gross - costs.total_r, trade.resolution_method,
                           trade.ambiguous_intrabar_events > 0, trade.bars_since_entry, trade.mfe_r, trade.mae_r,
                           plan.analysis.symbol, plan.analysis.regime, None, trade.entered_at, trade.exit_price,
-                          plan.assessment.confirmation.one_hour, plan.assessment.confirmation.four_hour,
+                          plan.assessment.confirmation.higher_timeframes,
                           plan.assessment.confirmation.ema, plan.assessment.confirmation.rsi,
                           plan.assessment.confirmation.macd, plan.assessment.confirmation.volume, True, True, True)
 

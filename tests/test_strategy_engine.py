@@ -5,9 +5,15 @@ import pytest
 
 from app.data.candles import CandleStore
 from app.events.models import CandleClosedEvent
+from app.indicators.engine import IndicatorValues, MacdValues
 from app.strategy.csd_strategy import CSDStrategyEngine
 from app.strategy.breakout import BreakoutStatus
+from app.strategy.breakout import BreakoutSetup
+from app.strategy.retest import RetestEvent
+from app.strategy.regime import MarketRegime
 from app.strategy.scoring import SignalClassification
+from app.structure.csd import CSDEvent, CSDDirection
+from app.structure.swings import SwingPoint, SwingType
 
 
 def _with_prices(candle, high: int, close: int = 1):
@@ -116,3 +122,47 @@ async def test_entry_mode_controls_when_breakout_assessments_are_emitted(
     store.add_candle(retest_candle)
     await engine.on_candle_closed(CandleClosedEvent("ETHUSDT", "15m", retest_candle))
     assert [assessment.entry_mode for assessment in assessments] == expected_after_retest
+
+
+@pytest.mark.asyncio
+async def test_strategy_tracks_closed_one_day_indicators_when_configured(make_candle):
+    candle = make_candle(timeframe="1d")
+    store = CandleStore(); store.add_candle(candle)
+    engine = CSDStrategyEngine(store, "15m", confirmation_timeframes=("1h", "4h", "1d"))
+
+    assert await engine.on_candle_closed(CandleClosedEvent("ETHUSDT", "1d", candle)) is None
+    assert ("ETHUSDT", "1d") in engine.latest_indicators
+
+
+@pytest.mark.asyncio
+async def test_one_day_confirmation_changes_assessment_score_without_changing_weights(make_candle):
+    source = make_candle(offset=0, close="101")
+    retest_candle = make_candle(offset=1, close="100.1")
+    level = Decimal("100")
+    swing = SwingPoint("ETHUSDT", "15m", source.open_time, level, SwingType.HIGH, source)
+    csd = CSDEvent("ETHUSDT", "15m", CSDDirection.BULLISH, source, swing, Decimal("0.8"))
+    setup = BreakoutSetup("ETHUSDT", "15m", CSDDirection.BULLISH, level, Decimal("99.8"), Decimal("100.2"), csd,
+                          BreakoutStatus.RETEST_DETECTED, quality=Decimal("1"))
+    retest = RetestEvent("ETHUSDT", "15m", retest_candle, level, BreakoutStatus.RETEST_DETECTED, setup, Decimal("1"))
+    aligned = IndicatorValues({10: Decimal("110"), 50: Decimal("100")}, Decimal("55"),
+                              MacdValues(Decimal("1"), Decimal("0"), Decimal("1")), volume_ratio=Decimal("2"))
+    opposed = IndicatorValues({10: Decimal("90"), 50: Decimal("100")}, Decimal("55"),
+                              MacdValues(Decimal("1"), Decimal("0"), Decimal("1")), volume_ratio=Decimal("2"))
+
+    async def assess_with(day_values):
+        observed = []
+        engine = CSDStrategyEngine(CandleStore(), "15m", confirmation_timeframes=("1h", "4h", "1d"),
+                                   on_assessment=observed.append)
+        key = ("ETHUSDT", "15m")
+        engine.latest_indicators.update({key: aligned, ("ETHUSDT", "1h"): aligned,
+                                         ("ETHUSDT", "4h"): aligned, ("ETHUSDT", "1d"): day_values})
+        engine.latest_regime[key] = MarketRegime.TRANSITION
+        await engine._assess(retest, key, entry_mode="retest")
+        return observed[0]
+
+    agreeing = await assess_with(aligned)
+    opposing = await assess_with(opposed)
+
+    assert agreeing.confirmation.higher_timeframes["1d"] is True
+    assert opposing.confirmation.higher_timeframes["1d"] is False
+    assert agreeing.score.total > opposing.score.total

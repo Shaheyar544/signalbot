@@ -67,7 +67,7 @@ def _signal_row(plan, audit) -> dict[str, Any]:
             "breakout": {"level": setup.breakout_level, "quality": setup.quality},
             "retest": {"timestamp": assessment.retest.candle.close_time, "quality": assessment.retest.quality},
             "ema": confirmation.ema, "rsi": confirmation.rsi, "macd": confirmation.macd, "volume": confirmation.volume,
-            "one_hour_context": confirmation.one_hour, "four_hour_context": confirmation.four_hour,
+            "higher_timeframe_context": confirmation.higher_timeframes,
             "outcome": audit.exit_reason if audit else "UNRESOLVED_OR_UNFILLED", "exit_reason": audit.exit_reason if audit else None,
             "net_r": audit.net_r if audit else None, "gross_r": audit.gross_r if audit else None,
             "mfe_r": audit.mfe_r if audit else None, "mae_r": audit.mae_r if audit else None,

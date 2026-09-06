@@ -7,13 +7,14 @@ from app.data.binance_ws import BinanceWebSocketClient, ReconnectBackoff, WS_BAS
 from app.data.candles import CandleStore
 from app.events.bus import EventBus
 from app.monitoring.health import HealthStatus
+from app.strategy.csd_strategy import CSDStrategyEngine
 
 
-def kline(symbol="ETHUSDT", closed=False, open_time=1735689600000, close="101"):
+def kline(symbol="ETHUSDT", closed=False, open_time=1735689600000, close="101", timeframe="15m"):
     high = str(max(102, int(close)))
     low = str(min(99, int(close)))
-    return {"stream": f"{symbol.lower()}@kline_15m", "data": {"k": {
-        "s": symbol, "i": "15m", "t": open_time, "T": open_time + 899999,
+    return {"stream": f"{symbol.lower()}@kline_{timeframe}", "data": {"k": {
+        "s": symbol, "i": timeframe, "t": open_time, "T": open_time + 899999,
         "o": "100", "h": high, "l": low, "c": close, "v": "12.5", "x": closed,
     }}}
 
@@ -32,6 +33,19 @@ async def test_ws_parses_forming_then_closed_once():
     assert len(events) == 1
     assert events[0].candle.is_closed
     assert health.timeframe_healthy("ETHUSDT", "15m")
+
+
+@pytest.mark.asyncio
+async def test_closed_one_day_websocket_candle_updates_configured_strategy_indicator_state():
+    store, bus, health = CandleStore(), EventBus(), HealthStatus()
+    strategy = CSDStrategyEngine(store, "15m", confirmation_timeframes=("1h", "4h", "1d"))
+    bus.subscribe_candle_closed(strategy.on_candle_closed)
+    client = BinanceWebSocketClient(("ETHUSDT",), ("15m", "1h", "4h", "1d"), store, bus, health)
+
+    await client.process_message(kline(closed=True, timeframe="1d"))
+
+    assert health.timeframe_healthy("ETHUSDT", "1d")
+    assert ("ETHUSDT", "1d") in strategy.latest_indicators
 
 
 @pytest.mark.asyncio
@@ -67,8 +81,9 @@ async def test_ws_ignores_malformed_and_unsubscribed_messages():
 
 
 def test_stream_names_are_dynamic_and_lowercase():
-    client = BinanceWebSocketClient(("ETHUSDT", "BTCUSDT"), ("15m", "1h", "4h"), CandleStore(), EventBus(), HealthStatus())
-    assert client.stream_names == ("ethusdt@kline_15m", "ethusdt@kline_1h", "ethusdt@kline_4h", "btcusdt@kline_15m", "btcusdt@kline_1h", "btcusdt@kline_4h")
+    client = BinanceWebSocketClient(("ETHUSDT", "BTCUSDT"), ("15m", "1h", "4h", "1d"), CandleStore(), EventBus(), HealthStatus())
+    assert client.stream_names == ("ethusdt@kline_15m", "ethusdt@kline_1h", "ethusdt@kline_4h", "ethusdt@kline_1d",
+                                   "btcusdt@kline_15m", "btcusdt@kline_1h", "btcusdt@kline_4h", "btcusdt@kline_1d")
 
 
 def test_default_websocket_endpoint_uses_binance_market_route_for_klines():

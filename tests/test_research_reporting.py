@@ -134,7 +134,7 @@ def test_lifecycle_funnel_refuses_unlinked_stage_events():
 
 
 def test_score_analytics_uses_persisted_htf_and_component_evidence_only():
-    enriched = replace(trade(0, "1"), htf_one_hour=True, htf_four_hour=False,
+    enriched = replace(trade(0, "1"), htf_agreement={"1h": True, "4h": False},
                        confirmation_ema=True, confirmation_rsi=False, confirmation_macd=True,
                        confirmation_volume=False, setup_csd=True, setup_breakout=True, setup_retest=True)
     report = score_analytics([enriched])

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -88,13 +89,25 @@ class Database:
         for name, definition in (("bars_in_trade", "INTEGER"), ("mfe_r", "TEXT"), ("mae_r", "TEXT"),
                                  ("trade_symbol", "TEXT"), ("regime", "TEXT"), ("session", "TEXT"),
                                  ("entry_time", "TEXT"), ("exit_price", "TEXT"),
-                                 ("htf_one_hour", "INTEGER"), ("htf_four_hour", "INTEGER"),
+                                 ("htf_one_hour", "INTEGER"), ("htf_four_hour", "INTEGER"), ("htf_agreement", "TEXT"),
                                  ("confirmation_ema", "INTEGER"), ("confirmation_rsi", "INTEGER"),
                                  ("confirmation_macd", "INTEGER"), ("confirmation_volume", "INTEGER"),
                                  ("setup_csd", "INTEGER"), ("setup_breakout", "INTEGER"), ("setup_retest", "INTEGER"),
                                  ("entry_mode", "TEXT NOT NULL DEFAULT 'retest'")):
             if name not in columns:
                 self.connection.execute(f"ALTER TABLE backtest_trades ADD COLUMN {name} {definition}")
+        # Preserve historical audits when upgrading the fixed 1H/4H schema to
+        # the extensible JSON agreement map.  The old columns remain readable
+        # for SQLite compatibility but no new write relies on them.
+        if {"htf_one_hour", "htf_four_hour"}.issubset(columns):
+            rows = self.connection.execute(
+                "SELECT trade_id,htf_one_hour,htf_four_hour FROM backtest_trades "
+                "WHERE htf_agreement IS NULL AND htf_one_hour IS NOT NULL AND htf_four_hour IS NOT NULL"
+            ).fetchall()
+            self.connection.executemany(
+                "UPDATE backtest_trades SET htf_agreement=? WHERE trade_id=?",
+                [(json.dumps({"1h": bool(row[1]), "4h": bool(row[2])}), row[0]) for row in rows],
+            )
         if {legacy_setup_column, legacy_confluence_column}.issubset(columns):
             self.connection.execute(
                 f"UPDATE backtest_trades SET score_total=CAST({legacy_confluence_column} AS TEXT), "

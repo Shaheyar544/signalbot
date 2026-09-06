@@ -51,7 +51,7 @@ class CSDStrategyEngine:
                  stop_buffer_percent: Decimal = Decimal("0"), on_risk_analysis: RiskHandler | None = None,
                  scoring_settings: ScoringSettings | None = None, breakout_method: str = "percent",
                  minimum_close_atr: Decimal = Decimal("0.15"), regime_classifier: RegimeClassifier | None = None,
-                 entry_mode: str = "retest") -> None:
+                 entry_mode: str = "retest", confirmation_timeframes: tuple[str, ...] = ("1h", "4h")) -> None:
         if entry_mode not in {"retest", "immediate", "both"}:
             raise ValueError("entry_mode must be retest, immediate, or both")
         scoring_settings = scoring_settings or ScoringSettings()
@@ -81,6 +81,7 @@ class CSDStrategyEngine:
         self.risk = RiskEngine(stop_buffer_percent)
         self.regime_classifier = regime_classifier or RegimeClassifier()
         self.entry_mode = entry_mode
+        self.confirmation_timeframes = confirmation_timeframes
         self.on_csd = on_csd
         self.on_retest = on_retest
         self.on_assessment = on_assessment
@@ -127,12 +128,11 @@ class CSDStrategyEngine:
         return csd_event
 
     async def _assess(self, retest_event: RetestEvent, key: tuple[str, str], *, entry_mode: str) -> None:
-        confirmation = self.confirmation.evaluate(
-            retest_event.setup.direction,
-            self.latest_indicators[key],
-            self.latest_indicators.get((retest_event.symbol, "1h")),
-            self.latest_indicators.get((retest_event.symbol, "4h")),
-        )
+        higher_timeframes = {
+            timeframe: self.latest_indicators.get((retest_event.symbol, timeframe))
+            for timeframe in self.confirmation_timeframes
+        }
+        confirmation = self.confirmation.evaluate(retest_event.setup.direction, self.latest_indicators[key], higher_timeframes)
         csd_quality = min(
             retest_event.setup.source_csd.close_distance_percent / self.scoring_settings.csd_saturation_percent,
             Decimal(1),

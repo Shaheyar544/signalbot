@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from decimal import Decimal
+import asyncio
+from concurrent.futures import Executor, ProcessPoolExecutor
 import csv
 import json
+import os
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Sequence
@@ -26,6 +29,11 @@ from app.events.models import Candle
 from app.backtest.research_checkpoints import ResearchCheckpointStore, ResearchProgress, atomic_json_write, jsonable
 
 
+def _run_symbol_validation_sync(settings: Settings, candles: Sequence[Candle], baseline_iterations: int) -> dict[str, Any]:
+    """Picklable canonical replay wrapper for an isolated symbol worker."""
+    return asyncio.run(build_symbol_validation(settings, candles, baseline_iterations=baseline_iterations))
+
+
 def _jsonable(value: Any) -> Any:
     if isinstance(value, Decimal): return str(value)
     if isinstance(value, tuple): return [_jsonable(item) for item in value]
@@ -37,11 +45,17 @@ def _jsonable(value: Any) -> Any:
 class UnifiedResearchOrchestrator:
     """Composes existing validation seams; it never owns a strategy implementation."""
     def __init__(self, settings: Settings, *, baseline_iterations: int = 1000,
-                 monte_carlo_iterations: int = 1000, random_seed: int = 7) -> None:
+                 monte_carlo_iterations: int = 1000, random_seed: int = 7,
+                 max_workers: int | None = None,
+                 executor_factory: Any = ProcessPoolExecutor) -> None:
         self.settings = settings
         self.baseline_iterations = baseline_iterations
         self.monte_carlo_iterations = monte_carlo_iterations
         self.random_seed = random_seed
+        if max_workers is not None and max_workers < 1:
+            raise ValueError("max_workers must be positive")
+        self.max_workers = max_workers
+        self.executor_factory = executor_factory
         self.cache = ResearchReplayCache()
 
     async def run(self, candles_by_symbol: dict[str, Sequence[Candle]], *,
@@ -84,25 +98,7 @@ class UnifiedResearchOrchestrator:
                                   "candles": sum(len(values) for values in candles_by_symbol.values())})
         update("data-loading", "1/1")
         started = perf_counter()
-        per_symbol = {}
-        for symbol, candles in candles_by_symbol.items():
-            dates = [candle.open_time for candle in candles]
-            key = replay_cache_key(git_commit=metadata["git_commit"], strategy_version=metadata["strategy_version"],
-                                   configuration_hash=metadata["configuration_hash"], symbol=symbol,
-                                   timeframes=tuple(self.settings.historical.timeframes),
-                                   start=min(dates).isoformat() if dates else None, end=max(dates).isoformat() if dates else None,
-                                   variant="canonical-baseline")
-            async def compute(candles=candles):
-                return await build_symbol_validation(self.settings, candles, baseline_iterations=self.baseline_iterations)
-            parameters = {"symbol": symbol, "variant": "canonical-baseline"}
-            saved = checkpoint_store.load("baseline", parameters) if checkpoint_store else None
-            if saved is not None:
-                per_symbol[symbol] = saved
-            else:
-                per_symbol[symbol] = await self.cache.get_or_compute_async(key, compute)
-                if checkpoint_store: checkpoint_store.save("baseline", parameters, per_symbol[symbol])
-            partial["baseline_completed_symbols"] = sorted(per_symbol)
-            update("baseline", f"{len(per_symbol)}/{len(candles_by_symbol)}")
+        per_symbol = await self._run_symbol_baselines(candles_by_symbol, metadata, checkpoint_store, update, partial)
         timings["baseline_replay_seconds"] = perf_counter() - started
         audits = [audit for result in per_symbol.values() for audit in result["audits"]]
         ordered_times = [candle.open_time for candles in candles_by_symbol.values() for candle in candles]
@@ -123,6 +119,7 @@ class UnifiedResearchOrchestrator:
         positive_symbols = sum(result["metrics"].expectancy_r > 0 for result in per_symbol.values())
         gate_input = {
             "status": "VALIDATED" if complete else "INCOMPLETE_VALIDATION_ORCHESTRATION",
+            "validation_label": validation_label,
             "out_of_sample_trades": walk.oos_trade_count,
             "expectancy_r": walk.oos_expectancy_r,
             "baseline_percentile": min(baseline_percentiles) if baseline_percentiles else Decimal(0),
@@ -190,6 +187,66 @@ class UnifiedResearchOrchestrator:
             report["status"] = report["status"]
             atomic_json_write(partial_report_path, report)
         return report
+
+    async def _run_symbol_baselines(self, candles_by_symbol: dict[str, Sequence[Candle]], metadata: dict[str, Any],
+                                    checkpoint_store: ResearchCheckpointStore | None, update, partial: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Run only independent canonical symbol baselines in OS processes.
+
+        Results are inserted in the input's stable symbol order after completion,
+        so process completion order cannot affect audit ordering or any metric.
+        """
+        ordered_symbols = tuple(candles_by_symbol)
+        results: dict[str, Any] = {}
+        pending: dict[str, tuple[Sequence[Candle], str]] = {}
+        for symbol in ordered_symbols:
+            candles = candles_by_symbol[symbol]
+            parameters = {"symbol": symbol, "variant": "canonical-baseline"}
+            saved = checkpoint_store.load("baseline", parameters) if checkpoint_store else None
+            if saved is not None:
+                results[symbol] = saved
+                if partial is not None: partial["baseline_completed_symbols"] = sorted(results)
+                update("baseline", f"{len(results)}/{len(ordered_symbols)}")
+                continue
+            dates = [candle.open_time for candle in candles]
+            key = replay_cache_key(git_commit=metadata["git_commit"], strategy_version=metadata["strategy_version"],
+                                   configuration_hash=metadata["configuration_hash"], symbol=symbol,
+                                   timeframes=tuple(self.settings.historical.timeframes),
+                                   start=min(dates).isoformat() if dates else None, end=max(dates).isoformat() if dates else None,
+                                   variant="canonical-baseline")
+            if key in self.cache._values:
+                self.cache._hits += 1
+                results[symbol] = self.cache._values[key]
+                if checkpoint_store: checkpoint_store.save("baseline", parameters, results[symbol])
+                if partial is not None: partial["baseline_completed_symbols"] = sorted(results)
+                update("baseline", f"{len(results)}/{len(ordered_symbols)}")
+                continue
+            pending[symbol] = (candles, key)
+        if pending:
+            max_workers = min(self.max_workers or (os.cpu_count() or 1), len(pending))
+            loop = asyncio.get_running_loop()
+            with self.executor_factory(max_workers=max_workers) as pool:
+                futures = {symbol: loop.run_in_executor(pool, _run_symbol_validation_sync, self.settings, candles,
+                                                         self.baseline_iterations)
+                           for symbol, (candles, _) in pending.items()}
+                remaining = dict(futures)
+                while remaining:
+                    done, _ = await asyncio.wait(tuple(remaining.values()), return_when=asyncio.FIRST_COMPLETED)
+                    for future in done:
+                        symbol = next(name for name, candidate in remaining.items() if candidate is future)
+                        del remaining[symbol]
+                        try:
+                            result = future.result()
+                        except Exception as error:
+                            raise RuntimeError(f"baseline validation failed for {symbol}: {error}") from error
+                        results[symbol] = result
+                        _, key = pending[symbol]
+                        self.cache._misses += 1
+                        self.cache._values[key] = result
+                        if checkpoint_store:
+                            checkpoint_store.save("baseline", {"symbol": symbol, "variant": "canonical-baseline"}, result)
+                        if partial is not None: partial["baseline_completed_symbols"] = sorted(results)
+                        update("baseline", f"{len(results)}/{len(ordered_symbols)}")
+        return {symbol: results[symbol] for symbol in ordered_symbols}
 
     def _data_integrity(self, candles_by_symbol: dict[str, Sequence[Candle]]) -> dict[str, Any]:
         expected_symbols = tuple(self.settings.historical.symbols)

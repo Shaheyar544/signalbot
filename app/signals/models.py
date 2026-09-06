@@ -35,7 +35,7 @@ def signal_evidence(assessment: SetupAssessment, risk: RiskAnalysis) -> dict[str
                      "zone_upper": str(setup.zone_upper), "status": str(setup.status), "quality": str(setup.quality)},
         "retest": {"time": retest.candle.close_time.isoformat(), "status": str(retest.status), "quality": str(retest.quality)},
         "confirmation": {"ema": confirmation.ema, "rsi": confirmation.rsi, "macd": confirmation.macd,
-                         "volume": confirmation.volume, "one_hour": confirmation.one_hour, "four_hour": confirmation.four_hour},
+                         "volume": confirmation.volume, "higher_timeframes": confirmation.higher_timeframes},
         "score": {"total": str(assessment.score.total), "classification": str(assessment.score.classification),
                   "components": {key: str(value) for key, value in assessment.score.components.items()}},
         "risk": {"risk_unit": str(risk.risk_unit)},

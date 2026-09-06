@@ -26,6 +26,9 @@ class GateResult:
 
 def evaluate_gate(report: dict, settings: GoLiveGateSettings, *, now: datetime | None = None) -> GateResult:
     failures: list[str] = []
+    label = str(report.get("validation_label", report.get("validation_scope", ""))).upper()
+    if "SMOKE_TEST" in label:
+        failures.append("smoke-test report cannot satisfy go-live gate")
     if report.get("status") not in {"VALIDATED", "COMPLETE"}:
         failures.append("validation report is not validated")
     if int(report.get("out_of_sample_trades", report.get("trade_count", 0))) < settings.min_out_of_sample_trades:

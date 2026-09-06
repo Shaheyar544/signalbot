@@ -28,8 +28,7 @@ class TradeAudit:
     # but are intentionally INCOMPLETE_DATA for execution-sensitive research.
     entry_time: datetime | None = None
     exit_price: Decimal | None = None
-    htf_one_hour: bool | None = None
-    htf_four_hour: bool | None = None
+    htf_agreement: dict[str, bool] | None = None
     confirmation_ema: bool | None = None
     confirmation_rsi: bool | None = None
     confirmation_macd: bool | None = None

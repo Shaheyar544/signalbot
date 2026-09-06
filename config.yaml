@@ -13,7 +13,7 @@ symbols:
 
 timeframes:
   primary: 15m
-  confirmation: [1h, 4h]
+  confirmation: [1h, 4h, 1d]
 
 market:
   exchange: binance
@@ -26,7 +26,7 @@ data:
 historical:
   symbols: [ETHUSDT, BTCUSDT, SOLUSDT, BNBUSDT, XRPUSDT]
   years: 3
-  timeframes: [15m, 1h, 4h]
+  timeframes: [15m, 1h, 4h, 1d]
 
 websocket:
   reconnect_enabled: true

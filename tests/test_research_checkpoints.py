@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from app.backtest.research_checkpoints import ResearchCheckpointStore, ResearchProgress, atomic_json_write
@@ -64,20 +65,22 @@ async def test_interrupted_then_resumed_fixture_matches_clean_run(tmp_path, monk
     inputs = {"ETHUSDT": (), "BTCUSDT": ()}
     clean = await UnifiedResearchOrchestrator(settings, baseline_iterations=1, monte_carlo_iterations=1).run(
         inputs, sensitivity_dimensions={"left_bars": [3]})
-    original = research_orchestrator.build_symbol_validation
+    original = research_orchestrator._run_symbol_validation_sync
     calls = 0
-    async def interrupted(*args, **kwargs):
+    def interrupted(*args, **kwargs):
         nonlocal calls
         calls += 1
         if calls == 2:
             raise RuntimeError("simulated interruption")
-        return await original(*args, **kwargs)
-    monkeypatch.setattr(research_orchestrator, "build_symbol_validation", interrupted)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(research_orchestrator, "_run_symbol_validation_sync", interrupted)
     with pytest.raises(RuntimeError, match="simulated interruption"):
-        await UnifiedResearchOrchestrator(settings, baseline_iterations=1, monte_carlo_iterations=1).run(
+        await UnifiedResearchOrchestrator(settings, baseline_iterations=1, monte_carlo_iterations=1,
+                                          executor_factory=ThreadPoolExecutor).run(
             inputs, sensitivity_dimensions={"left_bars": [3]}, checkpoint_root=tmp_path, checkpoint_mode="restart")
-    monkeypatch.setattr(research_orchestrator, "build_symbol_validation", original)
-    resumed = await UnifiedResearchOrchestrator(settings, baseline_iterations=1, monte_carlo_iterations=1).run(
+    monkeypatch.setattr(research_orchestrator, "_run_symbol_validation_sync", original)
+    resumed = await UnifiedResearchOrchestrator(settings, baseline_iterations=1, monte_carlo_iterations=1,
+                                                executor_factory=ThreadPoolExecutor).run(
         inputs, sensitivity_dimensions={"left_bars": [3]}, checkpoint_root=tmp_path, checkpoint_mode="resume")
     for field in ("baseline", "walk_forward", "sensitivity", "htf_experiment", "monte_carlo", "leave_one_symbol_out", "cost_stress"):
         assert clean[field] == resumed[field]

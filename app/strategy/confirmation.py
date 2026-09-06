@@ -14,14 +14,12 @@ class ConfirmationResult:
     rsi: bool
     macd: bool
     volume: bool
-    one_hour: bool
-    four_hour: bool
+    higher_timeframes: dict[str, bool]
     ema_quality: Decimal = Decimal("0")
     rsi_quality: Decimal = Decimal("0")
     macd_quality: Decimal = Decimal("0")
     volume_quality: Decimal = Decimal("0")
     htf_quality: Decimal = Decimal("0")
-
 
 class ConfirmationEngine:
     """Evaluates transparent supporting evidence; it never creates an instruction to trade."""
@@ -37,19 +35,21 @@ class ConfirmationEngine:
         self.macd_histogram_saturation_percent = macd_histogram_saturation_percent
 
     def evaluate(self, direction: CSDDirection, primary: IndicatorValues,
-                 one_hour: IndicatorValues | None, four_hour: IndicatorValues | None) -> ConfirmationResult:
+                 higher_timeframes: dict[str, IndicatorValues | None]) -> ConfirmationResult:
         ema = self._aligned(direction, primary); rsi = self._rsi_supports(direction, primary.rsi); macd = self._macd_supports(direction, primary)
         volume = primary.volume_ratio is not None and primary.volume_ratio >= self.volume_ratio_minimum
-        one_hour = self._not_strongly_opposed(direction, one_hour); four_hour = self._not_strongly_opposed(direction, four_hour)
-        price = primary.ema.get(50, Decimal(0))
+        htf_results = {timeframe: self._not_strongly_opposed(direction, values)
+                       for timeframe, values in higher_timeframes.items()}
+        agreeing = sum(htf_results.values())
+        total = len(htf_results)
         return ConfirmationResult(
             direction=direction,
-            ema=ema, rsi=rsi, macd=macd, volume=volume, one_hour=one_hour, four_hour=four_hour,
+            ema=ema, rsi=rsi, macd=macd, volume=volume, higher_timeframes=htf_results,
             ema_quality=self._ema_quality(primary) if ema else Decimal(0),
             rsi_quality=abs(primary.rsi - Decimal(50)) / Decimal(50) if rsi and primary.rsi is not None else Decimal(0),
             macd_quality=self._macd_quality(primary) if macd else Decimal(0),
             volume_quality=min((primary.volume_ratio - Decimal(1)) / self.volume_ratio_minimum, Decimal(1)) if volume and primary.volume_ratio is not None and self.volume_ratio_minimum else Decimal(1) if volume else Decimal(0),
-            htf_quality=Decimal("1") if one_hour and four_hour else Decimal("0.5") if one_hour or four_hour else Decimal(0),
+            htf_quality=Decimal(agreeing) / Decimal(total) if total else Decimal(0),
         )
 
     def _ema_quality(self, values: IndicatorValues) -> Decimal:

@@ -37,3 +37,11 @@ def test_loader_skips_invalid_symbol_instead_of_stopping_other_pairs():
     settings = load_settings(config)
     assert settings.enabled_symbols == ("ETHUSDT",)
     assert settings.invalid_symbols == ("BAD!",)
+
+
+def test_production_configuration_includes_one_day_confirmation_and_history():
+    settings = load_settings("config.yaml")
+
+    assert settings.confirmation_timeframes == ("1h", "4h", "1d")
+    assert settings.timeframes == ("15m", "1h", "4h", "1d")
+    assert settings.historical.timeframes == ("15m", "1h", "4h", "1d")

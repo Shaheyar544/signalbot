@@ -77,6 +77,7 @@ class LatestClosedCandleAnalyzer:
             stop_buffer_percent=self.settings.risk.stop_buffer_percent,
             scoring_settings=self.settings.scoring,
             entry_mode=self.settings.variants.entry_mode,
+            confirmation_timeframes=self.settings.confirmation_timeframes,
         )
         latest_csd = None
         timeframe_order = {timeframe: index for index, timeframe in enumerate(self.settings.timeframes)}
@@ -120,7 +121,7 @@ class LatestClosedCandleAnalyzer:
             "retest": {"status": str(retest.status), "time": retest.candle.close_time.isoformat(), "quality": str(retest.quality)},
             "confirmation": {"ema": assessment.confirmation.ema, "rsi": assessment.confirmation.rsi,
                              "macd": assessment.confirmation.macd, "volume": assessment.confirmation.volume,
-                             "one_hour": assessment.confirmation.one_hour, "four_hour": assessment.confirmation.four_hour},
+                             "higher_timeframes": assessment.confirmation.higher_timeframes},
             "score": {"total": str(score.total), "components": {name: str(value) for name, value in score.components.items()}},
         }
         plan = None

@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-SUPPORTED_TIMEFRAMES = frozenset({"15m", "1h", "4h"})
+SUPPORTED_TIMEFRAMES = frozenset({"15m", "1h", "4h", "1d"})
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]{3,30}$")
 LOGGER = logging.getLogger(__name__)
 

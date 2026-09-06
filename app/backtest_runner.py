@@ -82,6 +82,7 @@ class HistoricalBacktestRunner:
             stop_buffer_percent=self.settings.risk.stop_buffer_percent,
             scoring_settings=self.settings.scoring, on_assessment=capture_assessment,
             entry_mode=self.settings.variants.entry_mode,
+            confirmation_timeframes=self.settings.confirmation_timeframes,
             on_risk_analysis=capture,
         )
         ordered = sorted((item for item in candles if item.is_closed), key=lambda item: item.open_time)
@@ -123,8 +124,8 @@ class HistoricalBacktestRunner:
             trade.exit_reason, gross, costs.total_r, gross - costs.total_r, trade.resolution_method,
             trade.ambiguous_intrabar_events > 0,
             trade.bars_since_entry, trade.mfe_r, trade.mae_r, record.analysis.symbol, record.analysis.regime, None,
-            trade.entered_at, trade.exit_price, record.assessment.confirmation.one_hour,
-            record.assessment.confirmation.four_hour, record.assessment.confirmation.ema,
+            trade.entered_at, trade.exit_price, record.assessment.confirmation.higher_timeframes,
+            record.assessment.confirmation.ema,
             record.assessment.confirmation.rsi, record.assessment.confirmation.macd,
             record.assessment.confirmation.volume, True, True, True,
             record.assessment.entry_mode,

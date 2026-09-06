@@ -23,7 +23,7 @@ def _record_inputs(make_candle):
     csd = CSDEvent(source.symbol, source.timeframe, CSDDirection.BULLISH, source, swing, Decimal("1"))
     setup = BreakoutSetup(source.symbol, source.timeframe, CSDDirection.BULLISH, level, Decimal("99.8"), Decimal("100.2"), csd, BreakoutStatus.RETEST_DETECTED)
     retest = RetestEvent(source.symbol, source.timeframe, retest_candle, level, BreakoutStatus.RETEST_DETECTED, setup)
-    assessment = SetupAssessment(retest, ConfirmationResult(CSDDirection.BULLISH, True, True, True, True, True, True), ConfidenceScore(Decimal("8"), {}, SignalClassification.STRONG_SIGNAL))
+    assessment = SetupAssessment(retest, ConfirmationResult(CSDDirection.BULLISH, True, True, True, True, {"1h": True, "4h": True}), ConfidenceScore(Decimal("8"), {}, SignalClassification.STRONG_SIGNAL))
     risk = RiskAnalysis(source.symbol, source.timeframe, CSDDirection.BULLISH, Decimal("99.8"), Decimal("100.2"), Decimal("100"), Decimal("99"), Decimal("1"), (Decimal("101"), Decimal("102"), Decimal("103")), Decimal("105"))
     return assessment, risk
 
@@ -44,7 +44,7 @@ def test_signal_repository_persists_and_retrieves_stable_record(make_candle):
     evidence = repository.get_evidence(signal_id)
     assert evidence is not None
     assert evidence["csd"]["direction"] == "BULLISH"
-    assert evidence["confirmation"]["one_hour"] is True
+    assert evidence["confirmation"]["higher_timeframes"] == {"1h": True, "4h": True}
     assert evidence["risk"]["risk_unit"] == "1"
     database.close()
 
