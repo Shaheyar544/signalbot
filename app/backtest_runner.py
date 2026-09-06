@@ -81,6 +81,7 @@ class HistoricalBacktestRunner:
             rsi_bearish_maximum=self.settings.confirmation.rsi_bearish_maximum,
             stop_buffer_percent=self.settings.risk.stop_buffer_percent,
             scoring_settings=self.settings.scoring, on_assessment=capture_assessment,
+            entry_mode=self.settings.variants.entry_mode,
             on_risk_analysis=capture,
         )
         ordered = sorted((item for item in candles if item.is_closed), key=lambda item: item.open_time)
@@ -126,4 +127,5 @@ class HistoricalBacktestRunner:
             record.assessment.confirmation.four_hour, record.assessment.confirmation.ema,
             record.assessment.confirmation.rsi, record.assessment.confirmation.macd,
             record.assessment.confirmation.volume, True, True, True,
+            record.assessment.entry_mode,
         ))

@@ -76,6 +76,7 @@ class LatestClosedCandleAnalyzer:
             rsi_bearish_maximum=self.settings.confirmation.rsi_bearish_maximum,
             stop_buffer_percent=self.settings.risk.stop_buffer_percent,
             scoring_settings=self.settings.scoring,
+            entry_mode=self.settings.variants.entry_mode,
         )
         latest_csd = None
         timeframe_order = {timeframe: index for index, timeframe in enumerate(self.settings.timeframes)}

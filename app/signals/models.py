@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 def build_signal_id(assessment: SetupAssessment) -> str:
     setup = assessment.retest.setup
     swing = setup.source_csd.broken_swing
-    return f"{setup.symbol}-{setup.timeframe}-{setup.direction}-{swing.candle_open_time.isoformat()}-{swing.price}"
+    return f"{setup.symbol}-{setup.timeframe}-{setup.direction}-{swing.candle_open_time.isoformat()}-{swing.price}-{assessment.entry_mode}"
 
 
 def signal_evidence(assessment: SetupAssessment, risk: RiskAnalysis) -> dict[str, object]:
@@ -26,6 +26,7 @@ def signal_evidence(assessment: SetupAssessment, risk: RiskAnalysis) -> dict[str
     csd = setup.source_csd
     confirmation = assessment.confirmation
     return {
+        "entry_mode": assessment.entry_mode,
         "structure": {"swing_kind": str(csd.broken_swing.kind), "swing_price": str(csd.broken_swing.price),
                       "swing_time": csd.broken_swing.candle_open_time.isoformat()},
         "csd": {"direction": str(csd.direction), "time": csd.candle.close_time.isoformat(),
@@ -58,10 +59,11 @@ class SignalRecord:
     take_profit_3: Decimal
     take_profit_4: Decimal | None
     created_at: datetime
+    entry_mode: str = "retest"
 
     @classmethod
     def from_analysis(cls, assessment: SetupAssessment, risk: RiskAnalysis) -> "SignalRecord":
         return cls(build_signal_id(assessment), risk.symbol, risk.timeframe, risk.direction,
                    assessment.score.classification, assessment.score.total, risk.entry_low, risk.entry_high,
                    risk.reference_entry, risk.stop_loss, risk.take_profits[0], risk.take_profits[1],
-                   risk.take_profits[2], risk.take_profit_4, assessment.retest.candle.close_time)
+                   risk.take_profits[2], risk.take_profit_4, assessment.retest.candle.close_time, assessment.entry_mode)

@@ -322,6 +322,10 @@ def load_settings(path: str | Path = "config.yaml") -> Settings:
     historical_timeframes = tuple(_require_timeframe(str(item)) for item in historical_raw.get("timeframes", ["15m", "1h", "4h"]))
     if not historical_timeframes or len(set(historical_timeframes)) != len(historical_timeframes):
         raise ValueError("historical timeframes must be non-empty and unique")
+    variants_raw = raw.get("variants", {})
+    entry_mode = str(variants_raw.get("entry_mode", "retest")).lower()
+    if entry_mode not in {"retest", "immediate", "both"}:
+        raise ValueError("variants entry_mode must be retest, immediate, or both")
     return Settings(
         symbols=symbols,
         invalid_symbols=tuple(invalid_symbols),
@@ -346,11 +350,11 @@ def load_settings(path: str | Path = "config.yaml") -> Settings:
         exit_policy=ExitPolicySettings(policy_name, legs, move_stop, breakeven_offset, time_stop, intrabar_assumption),
         historical=HistoricalDataSettings(historical_symbols, historical_years, historical_timeframes),
         variants=VariantSettings(
-            entry_mode=str(raw.get("variants", {}).get("entry_mode", "retest")),
-            require_htf_agreement=bool(raw.get("variants", {}).get("require_htf_agreement", False)),
-            regime_filter=str(raw.get("variants", {}).get("regime_filter", "none")),
-            regime_min_atr_percentile=int(raw.get("variants", {}).get("regime_min_atr_percentile", 40)),
-            session_filter=str(raw.get("variants", {}).get("session_filter", "none")),
+            entry_mode=entry_mode,
+            require_htf_agreement=bool(variants_raw.get("require_htf_agreement", False)),
+            regime_filter=str(variants_raw.get("regime_filter", "none")),
+            regime_min_atr_percentile=int(variants_raw.get("regime_min_atr_percentile", 40)),
+            session_filter=str(variants_raw.get("session_filter", "none")),
         ),
         go_live_gate=raw.get("go_live_gate"),
     )

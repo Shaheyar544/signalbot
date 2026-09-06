@@ -15,12 +15,7 @@ from time import perf_counter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.backtest.phase9_config import load_sensitivity_config
-from app.backtest.research_orchestrator import UnifiedResearchOrchestrator, write_research_outputs
-from app.backtest.research_scope import scoped_research_settings, validation_scope
-from app.config.settings import load_settings, normalize_symbol
-from app.storage.database import Database
-from app.storage.repositories import CandleRepository
+from app.backtest.phase9_cli import main as phase9_main
 
 
 async def run(args) -> int:
@@ -88,4 +83,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(phase9_main(default_entry_modes="retest"))

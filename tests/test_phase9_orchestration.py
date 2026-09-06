@@ -66,3 +66,16 @@ async def test_build_validation_can_skip_random_baseline_work(monkeypatch):
     monkeypatch.setattr(phase9, "run_random_entry_experiment", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("baseline should not run")))
     result = await phase9.build_symbol_validation(load_settings("tests/fixtures/settings.yaml"), (), include_baseline=False)
     assert result["baseline"] is None
+
+
+def test_phase9_cli_entry_mode_variants_are_explicit_and_do_not_mutate_loaded_settings():
+    from app.backtest.phase9_cli import entry_mode_settings, parse_entry_modes
+    from app.config.settings import load_settings
+
+    settings = load_settings("tests/fixtures/settings.yaml")
+
+    assert parse_entry_modes("retest,immediate") == ("retest", "immediate")
+    assert entry_mode_settings(settings, "immediate").variants.entry_mode == "immediate"
+    assert settings.variants.entry_mode == "retest"
+    with pytest.raises(ValueError, match="entry mode"):
+        parse_entry_modes("retest,invalid")

@@ -49,9 +49,13 @@ class Database:
                 take_profit_2 TEXT NOT NULL,
                 take_profit_3 TEXT NOT NULL,
                 take_profit_4 TEXT,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                entry_mode TEXT NOT NULL DEFAULT 'retest'
             )"""
         )
+        signal_columns = {row[1] for row in self.connection.execute("PRAGMA table_info(signals)")}
+        if "entry_mode" not in signal_columns:
+            self.connection.execute("ALTER TABLE signals ADD COLUMN entry_mode TEXT NOT NULL DEFAULT 'retest'")
         self.connection.execute("CREATE INDEX IF NOT EXISTS idx_signals_lookup ON signals(symbol, timeframe, created_at)")
         self.connection.execute(
             """CREATE TABLE IF NOT EXISTS signal_evidence (
@@ -87,7 +91,8 @@ class Database:
                                  ("htf_one_hour", "INTEGER"), ("htf_four_hour", "INTEGER"),
                                  ("confirmation_ema", "INTEGER"), ("confirmation_rsi", "INTEGER"),
                                  ("confirmation_macd", "INTEGER"), ("confirmation_volume", "INTEGER"),
-                                 ("setup_csd", "INTEGER"), ("setup_breakout", "INTEGER"), ("setup_retest", "INTEGER")):
+                                 ("setup_csd", "INTEGER"), ("setup_breakout", "INTEGER"), ("setup_retest", "INTEGER"),
+                                 ("entry_mode", "TEXT NOT NULL DEFAULT 'retest'")):
             if name not in columns:
                 self.connection.execute(f"ALTER TABLE backtest_trades ADD COLUMN {name} {definition}")
         if {legacy_setup_column, legacy_confluence_column}.issubset(columns):

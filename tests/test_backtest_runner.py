@@ -81,6 +81,22 @@ async def test_runner_persists_same_candle_collision_only_after_the_signal_candl
 
 
 @pytest.mark.asyncio
+async def test_runner_persists_the_assessment_entry_mode_with_trade_audit(make_candle):
+    database = Database(Path(":memory:")); database.open()
+    signal, assessment, analysis = _analysis_fixture(make_candle)
+    assessment = replace(assessment, entry_mode="immediate")
+    def factory(store, callback): return _OneSignalStrategy(assessment, analysis, callback)
+
+    run = await HistoricalBacktestRunner(load_settings("tests/fixtures/settings.yaml"), BacktestRepository(database), factory).run(
+        [signal, _candle(make_candle, 1, 99, 101, 100)],
+    )
+
+    assert database.connection.execute(
+        "SELECT entry_mode FROM backtest_trades WHERE run_id=?", (run.run_id,),
+    ).fetchone() == ("immediate",)
+
+
+@pytest.mark.asyncio
 async def test_runner_excludes_unfilled_entries_from_trade_audits(make_candle):
     database = Database(Path(":memory:")); database.open()
     signal, assessment, analysis = _analysis_fixture(make_candle)

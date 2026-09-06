@@ -158,6 +158,7 @@ async def collect_strategy_plans(settings: Settings, candles: Sequence[Candle]) 
         rsi_bullish_minimum=settings.confirmation.rsi_bullish_minimum,
         rsi_bearish_maximum=settings.confirmation.rsi_bearish_maximum,
         stop_buffer_percent=settings.risk.stop_buffer_percent, scoring_settings=settings.scoring,
+        entry_mode=settings.variants.entry_mode,
         on_assessment=capture_assessment, on_risk_analysis=capture_analysis,
     )
     for candle in ordered:

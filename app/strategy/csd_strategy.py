@@ -33,6 +33,7 @@ class SetupAssessment:
     retest: RetestEvent
     confirmation: ConfirmationResult
     score: ConfidenceScore
+    entry_mode: str = "retest"
 
 
 AssessmentHandler = Callable[[SetupAssessment], Awaitable[None] | None]
@@ -49,7 +50,10 @@ class CSDStrategyEngine:
                  rsi_bullish_minimum: Decimal = Decimal("50"), rsi_bearish_maximum: Decimal = Decimal("50"),
                  stop_buffer_percent: Decimal = Decimal("0"), on_risk_analysis: RiskHandler | None = None,
                  scoring_settings: ScoringSettings | None = None, breakout_method: str = "percent",
-                 minimum_close_atr: Decimal = Decimal("0.15"), regime_classifier: RegimeClassifier | None = None) -> None:
+                 minimum_close_atr: Decimal = Decimal("0.15"), regime_classifier: RegimeClassifier | None = None,
+                 entry_mode: str = "retest") -> None:
+        if entry_mode not in {"retest", "immediate", "both"}:
+            raise ValueError("entry_mode must be retest, immediate, or both")
         scoring_settings = scoring_settings or ScoringSettings()
         self.scoring_settings = scoring_settings
         self.store = store
@@ -76,6 +80,7 @@ class CSDStrategyEngine:
         ))
         self.risk = RiskEngine(stop_buffer_percent)
         self.regime_classifier = regime_classifier or RegimeClassifier()
+        self.entry_mode = entry_mode
         self.on_csd = on_csd
         self.on_retest = on_retest
         self.on_assessment = on_assessment
@@ -100,55 +105,66 @@ class CSDStrategyEngine:
                 result = self.on_retest(retest_event)
                 if inspect.isawaitable(result):
                     await result
-            if retest_event.status is BreakoutStatus.RETEST_DETECTED:
-                confirmation = self.confirmation.evaluate(
-                    retest_event.setup.direction,
-                    self.latest_indicators[key],
-                    self.latest_indicators.get((event.symbol, "1h")),
-                    self.latest_indicators.get((event.symbol, "4h")),
-                )
-                csd_quality = min(
-                    retest_event.setup.source_csd.close_distance_percent / self.scoring_settings.csd_saturation_percent,
-                    Decimal(1),
-                )
-                assessment = SetupAssessment(
-                    retest_event,
-                    confirmation,
-                    self.scoring.score(
-                        confirmation,
-                        csd_quality=csd_quality,
-                        breakout_quality=retest_event.setup.quality,
-                        retest_quality=retest_event.quality,
-                    ),
-                )
-                self.latest_assessment[key] = assessment
-                if self.on_assessment is not None:
-                    result = self.on_assessment(assessment)
-                    if inspect.isawaitable(result):
-                        await result
-                if assessment.score.classification in {SignalClassification.GOOD_SIGNAL, SignalClassification.STRONG_SIGNAL}:
-                    try:
-                        analysis = self.risk.calculate(
-                            assessment, self.latest_structure.get(key, []), regime=self.latest_regime[key].value,
-                        )
-                    except ValueError as error:
-                        # A malformed/degenerate setup is not a trade; keep replay alive and auditable.
-                        LOGGER.warning("Skipping invalid risk plan for %s %s: %s", event.symbol, event.timeframe, error)
-                        return None
-                    self.latest_risk_analysis[key] = analysis
-                    if self.on_risk_analysis is not None:
-                        result = self.on_risk_analysis(analysis)
-                        if inspect.isawaitable(result):
-                            await result
+            if retest_event.status is BreakoutStatus.RETEST_DETECTED and self.entry_mode in {"retest", "both"}:
+                await self._assess(retest_event, key, entry_mode="retest")
         self.swing_store.replace(self.swings.detect(candles))
         structure = self.structure.evaluate(event.symbol, event.timeframe, self.swing_store.get_swings(event.candle.close_time))
         self.latest_structure[key] = structure
         csd_event = self.csd.evaluate(event.candle, structure, atr=self.latest_indicators[key].atr)
         if csd_event is not None:
             LOGGER.info("%s %s CSD detected at %s", csd_event.symbol, csd_event.direction, csd_event.candle.close_time.isoformat())
-            self.breakouts.start(csd_event)
+            setup = self.breakouts.start(csd_event)
+            if self.entry_mode in {"immediate", "both"}:
+                # An immediate entry is triggered by the closed breakout candle itself;
+                # it deliberately carries no retest credit and does not claim a retest.
+                immediate = RetestEvent(event.symbol, event.timeframe, event.candle, setup.breakout_level,
+                                       BreakoutStatus.PENDING_RETEST, setup, Decimal(0))
+                await self._assess(immediate, key, entry_mode="immediate")
             if self.on_csd is not None:
                 result = self.on_csd(csd_event)
                 if inspect.isawaitable(result):
                     await result
         return csd_event
+
+    async def _assess(self, retest_event: RetestEvent, key: tuple[str, str], *, entry_mode: str) -> None:
+        confirmation = self.confirmation.evaluate(
+            retest_event.setup.direction,
+            self.latest_indicators[key],
+            self.latest_indicators.get((retest_event.symbol, "1h")),
+            self.latest_indicators.get((retest_event.symbol, "4h")),
+        )
+        csd_quality = min(
+            retest_event.setup.source_csd.close_distance_percent / self.scoring_settings.csd_saturation_percent,
+            Decimal(1),
+        )
+        assessment = SetupAssessment(
+            retest_event,
+            confirmation,
+            self.scoring.score(
+                confirmation,
+                csd_quality=csd_quality,
+                breakout_quality=retest_event.setup.quality,
+                retest_quality=retest_event.quality,
+            ),
+            entry_mode,
+        )
+        self.latest_assessment[key] = assessment
+        if self.on_assessment is not None:
+            result = self.on_assessment(assessment)
+            if inspect.isawaitable(result):
+                await result
+        if assessment.score.classification not in {SignalClassification.GOOD_SIGNAL, SignalClassification.STRONG_SIGNAL}:
+            return
+        try:
+            analysis = self.risk.calculate(
+                assessment, self.latest_structure.get(key, []), regime=self.latest_regime[key].value,
+            )
+        except ValueError as error:
+            # A malformed/degenerate setup is not a trade; keep replay alive and auditable.
+            LOGGER.warning("Skipping invalid risk plan for %s %s: %s", retest_event.symbol, retest_event.timeframe, error)
+            return
+        self.latest_risk_analysis[key] = analysis
+        if self.on_risk_analysis is not None:
+            result = self.on_risk_analysis(analysis)
+            if inspect.isawaitable(result):
+                await result

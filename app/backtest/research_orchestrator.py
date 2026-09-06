@@ -332,6 +332,13 @@ def write_research_outputs(report: dict[str, Any], *, json_path: str | Path, csv
         with output.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=("scope", "trade_count", "expectancy_r", "total_r", "max_drawdown_r", "profit_factor"))
             writer.writeheader()
-            for scope, values in report["leave_one_symbol_out"].items():
+            source = report.get("leave_one_symbol_out", report.get("entry_mode_comparison", {}))
+            for scope, values in source.items():
                 if isinstance(values, dict):
-                    writer.writerow({"scope": scope, **{name: values.get(name) for name in writer.fieldnames[1:]}})
+                    metrics = values.get("leave_one_symbol_out", {}).get("combined", values)
+                    writer.writerow({"scope": scope, **{name: metrics.get(name) for name in writer.fieldnames[1:]}})
+
+
+if __name__ == "__main__":
+    from app.backtest.phase9_cli import main
+    raise SystemExit(main())

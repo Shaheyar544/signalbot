@@ -86,3 +86,33 @@ async def test_strategy_engine_generates_risk_analysis_only_for_good_or_strong_a
     await engine.on_candle_closed(CandleClosedEvent("ETHUSDT", "15m", retest_candle))
 
     assert analyses == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("entry_mode", "expected_after_breakout", "expected_after_retest"),
+    (("retest", [], ["retest"]), ("immediate", ["immediate"], ["immediate"]),
+     ("both", ["immediate"], ["immediate", "retest"])),
+)
+async def test_entry_mode_controls_when_breakout_assessments_are_emitted(
+    make_candle, entry_mode, expected_after_breakout, expected_after_retest,
+):
+    """The public strategy callback distinguishes immediate and retest variants."""
+    candles = [_with_prices(make_candle(offset=index), high, close)
+               for index, (high, close) in enumerate(((1, 1), (3, 1), (1, 1), (2, 1), (1, 1), (3, 3)))]
+    retest_candle = replace(make_candle(offset=6, close="2.1"), open=Decimal("2"), high=Decimal("3"), low=Decimal("1.9"))
+    store = CandleStore()
+    assessments = []
+    engine = CSDStrategyEngine(
+        store, "15m", left_bars=1, right_bars=1, minimum_close_distance_percent=Decimal("0.5"),
+        entry_mode=entry_mode, on_assessment=lambda assessment: assessments.append(assessment),
+    )
+
+    for candle in candles:
+        store.add_candle(candle)
+    await engine.on_candle_closed(CandleClosedEvent("ETHUSDT", "15m", candles[-1]))
+    assert [assessment.entry_mode for assessment in assessments] == expected_after_breakout
+
+    store.add_candle(retest_candle)
+    await engine.on_candle_closed(CandleClosedEvent("ETHUSDT", "15m", retest_candle))
+    assert [assessment.entry_mode for assessment in assessments] == expected_after_retest

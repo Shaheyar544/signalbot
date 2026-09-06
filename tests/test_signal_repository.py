@@ -1,3 +1,4 @@
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -55,4 +56,22 @@ def test_signal_repository_rejects_duplicate_stable_id(make_candle):
 
     assert repository.save(assessment, risk)
     assert not repository.save(assessment, risk)
+    database.close()
+
+
+def test_signal_repository_persists_entry_mode_as_part_of_signal_identity(make_candle):
+    database = Database(Path(":memory:")); database.open()
+    assessment, risk = _record_inputs(make_candle)
+    immediate = replace(assessment, entry_mode="immediate")
+    retest = replace(assessment, entry_mode="retest")
+    repository = SignalRepository(database)
+
+    assert repository.save(immediate, risk)
+    assert repository.save(retest, risk)
+    immediate_record = repository.get(build_signal_id(immediate))
+    retest_record = repository.get(build_signal_id(retest))
+
+    assert immediate_record is not None and immediate_record.entry_mode == "immediate"
+    assert retest_record is not None and retest_record.entry_mode == "retest"
+    assert repository.get_evidence(immediate_record.signal_id)["entry_mode"] == "immediate"
     database.close()

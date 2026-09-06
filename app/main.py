@@ -97,6 +97,7 @@ async def run(config_path: str, *, force_live: bool = False, acknowledge_risk: b
         rsi_bearish_maximum=settings.confirmation.rsi_bearish_maximum,
         stop_buffer_percent=settings.risk.stop_buffer_percent,
         scoring_settings=settings.scoring,
+        entry_mode=settings.variants.entry_mode,
         on_risk_analysis=persist_signal,
     )
     bus.subscribe_candle_closed(strategy.on_candle_closed)

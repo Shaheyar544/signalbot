@@ -37,6 +37,7 @@ class TradeAudit:
     setup_csd: bool | None = None
     setup_breakout: bool | None = None
     setup_retest: bool | None = None
+    entry_mode: str = "retest"
 
     @property
     def total_cost_r(self) -> Decimal | None:
